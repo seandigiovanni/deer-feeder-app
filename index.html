@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14160f">
+<title>Deer Feeder</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.16.0/dist/mqtt.min.js"></script>
+<style>
+:root{
+  --ground:#14160f; --surface:#1e2118; --line:#2e3226; --text:#ece8dc; --muted:#a9a58f;
+  --blaze:#e8772e; --blaze-ink:#1a1206; --corn:#d9b44a; --ok:#8fbf5a; --warn:#e0b04a; --bad:#e2735f;
+  --display:'Barlow Condensed','Arial Narrow',sans-serif; --body:'IBM Plex Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ground);color:var(--text);font-family:var(--body);-webkit-tap-highlight-color:transparent}
+body{padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:460px;margin:0 auto;padding:20px 18px 32px;display:flex;flex-direction:column;gap:14px}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--blaze);outline-offset:2px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+.small{font-size:13px;color:var(--muted)}
+.hidden{display:none!important}
+h1{font-family:var(--display);font-weight:700;font-size:36px;line-height:1;margin:0}
+h2{font-family:var(--display);font-weight:700;font-size:22px;margin:0}
+.big{font-family:var(--display);font-weight:700;font-size:28px;line-height:1}
+/* header */
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.conn{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted);margin-top:4px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+.iconbtn{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center}
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.tile .big{font-size:26px}
+.tile .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* corn */
+.bar{height:10px;border-radius:5px;background:var(--ground);border:1px solid var(--line);overflow:hidden}
+.bar>div{height:100%;width:0;background:var(--corn);transition:width .6s ease}
+/* drop */
+.pills{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.pill{height:46px;border-radius:10px;border:1px solid var(--line);background:var(--ground);font-weight:500}
+.pill[aria-pressed="true"]{border-color:var(--blaze);background:#3a2616;color:#f7c9a6;font-weight:600}
+.primary{height:56px;width:100%;border:none;border-radius:14px;background:var(--blaze);color:var(--blaze-ink);font-family:var(--display);font-weight:700;font-size:22px;letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:10px}
+.primary:disabled{opacity:.45;cursor:not-allowed}
+.secondary{min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--ground);font-size:14px}
+.note{border-radius:12px;padding:11px 13px;font-size:14px;border:1px solid var(--line)}
+.note.ok{border-color:#4b6b2e;background:#1f2b16;color:#cfe5b4}
+.note.warn{border-color:#6b5a2e;background:#2b2616;color:#f0dca4}
+.note.bad{border-color:#6b2e24;background:#2b1814;color:#f4c4b8}
+/* log */
+ol.log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+ol.log li{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--line);font-size:14px}
+ol.log li:first-child{border-top:none}
+ol.log time{color:var(--muted);font-size:13px;white-space:nowrap}
+/* sign in */
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
+input[type=text],input[type=password]{width:100%;height:48px;border-radius:12px;border:1px solid var(--line);background:var(--ground);padding:0 14px;font-size:16px}
+.row{display:flex;gap:10px;align-items:center}
+.err{color:var(--bad);font-size:14px;margin-top:10px;min-height:20px}
+a{color:var(--blaze)}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ============ SIGN IN ============ -->
+<section id="signin" class="hidden" aria-labelledby="si-title">
+  <h1 id="si-title">Connect to your feeder</h1>
+  <p class="small">Use the <strong>feeder-app</strong> login from your HiveMQ console. It's saved only on this phone.</p>
+  <form id="siForm" class="panel" autocomplete="on">
+    <label for="siHost">Broker address</label>
+    <input id="siHost" type="text" inputmode="url" autocapitalize="off" spellcheck="false" required>
+    <label for="siUser">Username</label>
+    <input id="siUser" type="text" autocapitalize="off" autocomplete="username" required>
+    <label for="siPass">Password</label>
+    <input id="siPass" type="password" autocomplete="current-password" required>
+    <label for="siFeeder">Feeder ID</label>
+    <input id="siFeeder" type="text" autocapitalize="characters" spellcheck="false" required>
+    <label for="siName">Feeder name</label>
+    <input id="siName" type="text" placeholder="Ridge Feeder">
+    <div class="err" id="siErr" role="alert"></div>
+    <button class="primary" type="submit" style="margin-top:6px">Connect</button>
+  </form>
+</section>
+
+<!-- ============ HOME ============ -->
+<section id="home" class="hidden" aria-labelledby="feederName">
+  <div class="top">
+    <div>
+      <h1 id="feederName">Feeder</h1>
+      <div class="conn" aria-live="polite"><span class="dot" id="connDot"></span><span id="connText">Connecting…</span></div>
+    </div>
+    <div class="row">
+      <button class="iconbtn" id="btnRefresh" aria-label="Ask the feeder for a fresh reading" title="Refresh">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+      </button>
+      <button class="iconbtn" id="btnSettings" aria-label="Settings" title="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="tiles" style="margin-top:14px">
+    <div class="tile"><span class="small">Battery</span><span class="big" id="tBatt">—</span><span class="sub" id="tBattSub">waiting</span></div>
+    <div class="tile"><span class="small">Signal</span><span class="big" id="tSig">—</span><span class="sub" id="tSigSub">waiting</span></div>
+    <div class="tile"><span class="small">Last drop</span><span class="big" id="tDrop">—</span><span class="sub" id="tDropSub">none yet</span></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div class="row" style="justify-content:space-between;align-items:baseline"><span class="small">Corn left in the can</span><span class="small" id="cornAge"></span></div>
+    <div class="row" style="align-items:baseline;gap:8px;margin:6px 0 10px"><span class="big" id="cornLb">—</span><span class="small" id="cornPct">No lid-sensor reading yet</span></div>
+    <div class="bar" role="img" id="cornBarWrap" aria-label="Corn level unknown"><div id="cornBar"></div></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:12px">
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Drop corn now</h2><span class="small">Amount</span></div>
+    <div class="pills" role="group" aria-label="Amount to drop" id="pills"></div>
+    <button class="primary" id="btnDrop">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+      <span id="btnDropText">Drop 1 cup</span>
+    </button>
+    <div id="dropNote" class="note hidden" role="status"></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div class="row" style="justify-content:space-between;align-items:center;gap:12px">
+      <div><span class="small">Location</span><div id="locText" style="font-size:15px;font-weight:600;margin-top:3px">No GPS fix yet</div><div class="small" id="locSub"></div></div>
+      <a id="locMap" class="secondary hidden" style="display:grid;place-items:center;text-decoration:none" target="_blank" rel="noopener">Open map</a>
+    </div>
+    <button class="secondary" id="btnGps" style="margin-top:10px;width:100%">Request new GPS fix</button>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2 style="font-size:20px;margin-bottom:6px">Activity</h2>
+    <ol class="log" id="log"><li><span class="small">Nothing yet. Drops, jams and readings show up here.</span></li></ol>
+  </div>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section id="settings" class="hidden" aria-labelledby="st-title">
+  <div class="top"><h1 id="st-title">Settings</h1><button class="secondary" id="btnBack">Done</button></div>
+  <div class="panel" style="margin-top:14px">
+    <label for="stName">Feeder name</label><input id="stName" type="text">
+    <label>Feeder ID</label><div id="stFeeder" style="font-size:16px"></div>
+    <label>Broker</label><div id="stHost" class="small" style="word-break:break-all"></div>
+    <label>Signed in as</label><div id="stUser" style="font-size:16px"></div>
+  </div>
+  <button class="secondary" id="btnSignOut" style="margin-top:14px;width:100%;border-color:#6b2e24;color:#f4c4b8">Sign out and forget the password</button>
+</section>
+
+</main>
+<script>
+(() => {
+  const DEFAULT_HOST = "3e061c57723a441cbfc6a6bae9afaa60.s1.eu.hivemq.cloud";
+  const DEFAULT_FEEDER = "24587C6F0318";
+  const OFFLINE_AFTER_MS = 12 * 60 * 1000;    // feeder sends status every 5 min
+  const REPLY_TIMEOUT_MS = 60 * 1000;
+  const AMOUNTS = [{p:1,label:"¼ cup"},{p:2,label:"½ cup"},{p:4,label:"1 cup"},{p:8,label:"2 cups"}];
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d = null) { try { const v = localStorage.getItem("feeder." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("feeder." + k, JSON.stringify(v)); } catch {} },
+    del(k) { try { localStorage.removeItem("feeder." + k); } catch {} }
+  };
+
+  let client = null, cfg = store.get("cfg"), lastStatusAt = 0, lastStatus = null;
+  let amount = store.get("amount", 4), pending = null, log = store.get("log", []);
+
+  // ---------- views ----------
+  function show(view) { for (const v of ["signin","home","settings"]) $(v).classList.toggle("hidden", v !== view); window.scrollTo(0,0); }
+
+  // ---------- sign in ----------
+  $("siHost").value = (cfg && cfg.host) || DEFAULT_HOST;
+  $("siUser").value = (cfg && cfg.user) || "feeder-app";
+  $("siFeeder").value = (cfg && cfg.feeder) || DEFAULT_FEEDER;
+  $("siName").value = (cfg && cfg.name) || "";
+  $("siForm").addEventListener("submit", e => {
+    e.preventDefault();
+    cfg = { host: $("siHost").value.trim().replace(/^(wss?|mqtts?|https?):\/\//, "").replace(/[\/:].*$/, ""),
+            user: $("siUser").value.trim(), pass: $("siPass").value,
+            feeder: $("siFeeder").value.trim().toUpperCase(), name: $("siName").value.trim() || "Ridge Feeder" };
+    $("siErr").textContent = "";
+    connect(true);
+  });
+
+  // ---------- MQTT ----------
+  const topic = s => `feeder/${cfg.feeder}/${s}`;
+  function connect(fromSignIn) {
+    if (client) { client.end(true); client = null; }
+    setConn("warn", "Connecting to the broker…");
+    $("feederName").textContent = cfg.name;
+    if (!fromSignIn) show("home");
+    client = mqtt.connect(`wss://${cfg.host}:8884/mqtt`, {
+      username: cfg.user, password: cfg.pass, protocolVersion: 4,
+      clientId: "feeder-app-" + Math.random().toString(16).slice(2, 10),
+      clean: true, reconnectPeriod: 5000, connectTimeout: 15000, keepalive: 60
+    });
+    client.on("connect", () => {
+      if (fromSignIn) { store.set("cfg", cfg); fromSignIn = false; show("home"); }
+      client.subscribe([topic("status"), topic("event")], { qos: 1 });
+      setConn("warn", "Connected. Waiting for the feeder…");
+      send("status");
+      refreshConn();
+    });
+    client.on("message", (t, buf) => handle(t, buf.toString()));
+    client.on("reconnect", () => setConn("warn", "Reconnecting to the broker…"));
+    client.on("offline", () => setConn("bad", "No connection. Check this phone's internet."));
+    client.on("error", err => {
+      const msg = /not authori[sz]ed|bad user|password/i.test(String(err && err.message)) ? "The username or password was not accepted." : "Could not reach the broker. Check the address and your internet.";
+      if (!$("signin").classList.contains("hidden")) { $("siErr").textContent = msg; client.end(true); client = null; }
+      else setConn("bad", msg);
+    });
+  }
+  function send(cmd) {
+    if (!client || !client.connected) return false;
+    client.publish(topic("cmd"), cmd, { qos: 1 });
+    return true;
+  }
+  function handle(t, text) {
+    let d; try { d = JSON.parse(text); } catch { return; }
+    if (t.endsWith("/status")) { lastStatusAt = Date.now(); lastStatus = d; renderStatus(d); refreshConn(); }
+    if (t.endsWith("/event")) onEvent(d);
+  }
+
+  // ---------- connection state ----------
+  function setConn(kind, text) { $("connDot").className = "dot " + kind; $("connText").textContent = text; }
+  function refreshConn() {
+    if (!client || !client.connected) return;
+    if (!lastStatusAt) return;
+    const age = Date.now() - lastStatusAt;
+    if (age > OFFLINE_AFTER_MS) setConn("bad", `Feeder silent for ${ago(lastStatusAt)}`);
+    else setConn("ok", `Online · checked in ${ago(lastStatusAt)}`);
+    $("cornAge").textContent = lastStatus && lastStatus.corn_mm !== undefined ? `Lid sensor · ${ago(lastStatusAt)}` : "";
+  }
+  setInterval(refreshConn, 20000);
+
+  // ---------- rendering ----------
+  function ago(ts) {
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 60) return "just now"; const m = Math.round(s / 60);
+    if (m < 60) return `${m} min ago`; const h = Math.round(m / 60);
+    return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
+  }
+  function battPct(v) {   // resting voltage of a 12 V lead-acid battery
+    const pts = [[11.8,0],[12.0,25],[12.2,50],[12.4,75],[12.7,100]];
+    if (v <= pts[0][0]) return 0; if (v >= 12.7) return 100;
+    for (let i = 1; i < pts.length; i++) if (v <= pts[i][0]) {
+      const [v0,p0] = pts[i-1], [v1,p1] = pts[i]; return Math.round(p0 + (p1-p0) * (v-v0)/(v1-v0)); }
+  }
+  function sigLabel(r) { return r >= -85 ? "Strong" : r >= -95 ? "Good" : r >= -105 ? "Fair" : "Weak"; }
+  function clock(epochSec) { return new Date(epochSec * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  function renderStatus(d) {
+    if (typeof d.batt_v === "number") {
+      const valid = d.batt_v > 6;
+      $("tBatt").textContent = valid ? battPct(d.batt_v) + "%" : "—";
+      $("tBattSub").textContent = valid ? d.batt_v.toFixed(2) + " V" : "not connected";
+    }
+    if (typeof d.rssi === "number") { $("tSig").textContent = sigLabel(d.rssi); $("tSigSub").textContent = d.rssi + " dBm"; }
+    if (d.last_drop > 1600000000) { $("tDrop").textContent = clock(d.last_drop).replace(" ", ""); $("tDropSub").textContent = `${d.pockets_total} pockets total`; }
+    if (typeof d.corn_pct === "number" && d.corn_pct >= 0) {
+      $("cornLb").textContent = `~${Math.round(d.corn_lb)} lb`;
+      $("cornPct").textContent = `${Math.round(d.corn_pct)}% full`;
+      $("cornBar").style.width = Math.max(0, Math.min(100, d.corn_pct)) + "%";
+      $("cornBarWrap").setAttribute("aria-label", `Corn level ${Math.round(d.corn_pct)} percent`);
+      if (d.corn_pct < 15) { $("cornPct").textContent += " · refill soon"; $("cornBar").style.background = "var(--bad)"; }
+      else $("cornBar").style.background = "";
+    }
+    if (typeof d.lat === "number") {
+      $("locText").textContent = `${Math.abs(d.lat).toFixed(5)}° ${d.lat >= 0 ? "N" : "S"}, ${Math.abs(d.lon).toFixed(5)}° ${d.lon >= 0 ? "E" : "W"}`;
+      $("locSub").textContent = d.fix_conf_m ? `Accurate to about ${Math.round(d.fix_conf_m)} m` : "";
+      const a = $("locMap"); a.href = `https://www.google.com/maps/search/?api=1&query=${d.lat},${d.lon}`; a.classList.remove("hidden");
+    }
+  }
+
+  // ---------- drop now ----------
+  function renderPills() {
+    $("pills").innerHTML = "";
+    for (const a of AMOUNTS) {
+      const b = document.createElement("button");
+      b.className = "pill"; b.type = "button"; b.textContent = a.label;
+      b.setAttribute("aria-pressed", String(a.p === amount));
+      b.onclick = () => { amount = a.p; store.set("amount", amount); renderPills(); };
+      $("pills").appendChild(b);
+    }
+    const cur = AMOUNTS.find(a => a.p === amount) || AMOUNTS[2];
+    $("btnDropText").textContent = "Drop " + cur.label;
+  }
+  function note(kind, text) { const n = $("dropNote"); n.className = "note " + kind; n.textContent = text; }
+  $("btnDrop").onclick = () => {
+    if (pending) return;
+    if (!send("drop " + amount)) { note("bad", "Not connected to the broker. The drop was not sent."); return; }
+    const label = (AMOUNTS.find(a => a.p === amount) || {}).label;
+    pending = { pockets: amount, timer: setTimeout(() => {
+      note("warn", "Sent, but no reply from the feeder yet. It will drop when it next checks in.");
+      pending = null; $("btnDrop").disabled = false; }, REPLY_TIMEOUT_MS) };
+    $("btnDrop").disabled = true;
+    note("warn", `Sent. Waiting for the feeder to drop ${label}…`);
+  };
+  function onEvent(d) {
+    if (d.event === "drop") {
+      addLog(`Dropped ${cupsText(d.pockets)} (${d.pockets} pockets)`);
+      if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = false; note("ok", `Dropped ${cupsText(d.pockets)}.`); }
+    } else if (d.event === "jam") {
+      addLog(`Jam after ${d.pockets} of ${d.requested} pockets`, true);
+      if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = false; }
+      note("bad", `The wheel jammed after ${cupsText(d.pockets)}. Check the wheel and the wiper before feeding again.`);
+    } else if (d.event === "gps_failed") {
+      addLog("GPS fix failed", true);
+      $("locSub").textContent = "Last GPS attempt failed. Try again with a clearer view of the sky.";
+    }
+  }
+  function cupsText(p) { const c = p / 4; const w = Math.floor(c), f = ["","¼","½","¾"][p % 4];
+    return `${w ? w : ""}${f}${w ? "" : ""} ${c <= 1 ? "cup" : "cups"}`.trim(); }
+
+  // ---------- activity log ----------
+  function addLog(text, bad) { log.unshift({ t: Date.now(), text, bad: !!bad }); log = log.slice(0, 15); store.set("log", log); renderLog(); }
+  function renderLog() {
+    const ol = $("log"); if (!log.length) return; ol.innerHTML = "";
+    for (const e of log) {
+      const li = document.createElement("li");
+      const s = document.createElement("span"); s.textContent = e.text; if (e.bad) s.style.color = "var(--bad)";
+      const tm = document.createElement("time"); tm.dateTime = new Date(e.t).toISOString();
+      tm.textContent = new Date(e.t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      li.append(s, tm); ol.appendChild(li);
+    }
+  }
+
+  // ---------- other buttons ----------
+  $("btnRefresh").onclick = () => { if (send("status")) setConn("warn", "Asked the feeder for a fresh reading…"); };
+  $("btnGps").onclick = () => {
+    if (send("gps")) { $("locSub").textContent = "Getting a fix. This takes 1–3 minutes, and the feeder is briefly offline while it does."; addLog("Requested a GPS fix"); }
+  };
+  $("btnSettings").onclick = () => { $("stName").value = cfg.name; $("stFeeder").textContent = cfg.feeder; $("stHost").textContent = cfg.host; $("stUser").textContent = cfg.user; show("settings"); };
+  $("btnBack").onclick = () => { cfg.name = $("stName").value.trim() || cfg.name; store.set("cfg", cfg); $("feederName").textContent = cfg.name; show("home"); };
+  $("btnSignOut").onclick = () => { if (client) client.end(true); client = null; store.del("cfg"); cfg = null; $("siPass").value = ""; show("signin"); };
+
+  // ---------- start ----------
+  renderPills(); renderLog();
+  if (typeof mqtt === "undefined") { show("signin"); $("siErr").textContent = "The connection library didn't load. Check this phone's internet and reload."; }
+  else if (cfg && cfg.pass) connect(false); else show("signin");
+})();
+</script>
+</body>
+</html>
