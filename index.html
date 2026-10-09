@@ -250,9 +250,9 @@ a{color:var(--blaze)}
     if (m < 60) return `${m} min ago`; const h = Math.round(m / 60);
     return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
   }
-  function battPct(v) {   // resting voltage of a 12 V lead-acid battery
-    const pts = [[11.8,0],[12.0,25],[12.2,50],[12.4,75],[12.7,100]];
-    if (v <= pts[0][0]) return 0; if (v >= 12.7) return 100;
+  function battPct(v) {   // resting voltage of a 6 V lead-acid battery
+    const pts = [[5.90,0],[6.00,25],[6.10,50],[6.20,75],[6.35,100]];
+    if (v <= pts[0][0]) return 0; if (v >= 6.35) return 100;
     for (let i = 1; i < pts.length; i++) if (v <= pts[i][0]) {
       const [v0,p0] = pts[i-1], [v1,p1] = pts[i]; return Math.round(p0 + (p1-p0) * (v-v0)/(v1-v0)); }
   }
@@ -260,7 +260,7 @@ a{color:var(--blaze)}
   function clock(epochSec) { return new Date(epochSec * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
   function renderStatus(d) {
     if (typeof d.batt_v === "number") {
-      const valid = d.batt_v > 6;
+      const valid = d.batt_v > 3;
       $("tBatt").textContent = valid ? battPct(d.batt_v) + "%" : "—";
       $("tBattSub").textContent = valid ? d.batt_v.toFixed(2) + " V" : "not connected";
     }
