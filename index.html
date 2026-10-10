@@ -66,6 +66,14 @@ input[type=text],input[type=password]{width:100%;height:48px;border-radius:12px;
 .row{display:flex;gap:10px;align-items:center}
 .err{color:var(--bad);font-size:14px;margin-top:10px;min-height:20px}
 a{color:var(--blaze)}
+/* corn + total row */
+.duo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:8px;align-items:stretch}
+.duo .panel{display:flex;flex-direction:column;min-width:0}
+.linkbtn{background:none;border:1px solid var(--line);border-radius:10px;min-height:36px;padding:0 12px;font-size:13px;color:var(--muted)}
+/* confirm dialog */
+dialog{border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--text);padding:18px;max-width:340px;width:calc(100% - 40px)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.danger{height:48px;border:none;border-radius:12px;background:var(--bad);color:#1a0806;font-weight:600;font-size:16px;flex:1}
 /* schedule */
 .srow{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .srow:first-child{border-top:none}
@@ -125,11 +133,25 @@ a{color:var(--blaze)}
     <div class="tile"><span class="small">Last drop</span><span class="big" id="tDrop">—</span><span class="sub" id="tDropSub">none yet</span></div>
   </div>
 
-  <div class="panel" style="margin-top:14px">
-    <div class="row" style="justify-content:space-between;align-items:baseline"><span class="small">Corn left in the can</span><span class="small" id="cornAge"></span></div>
-    <div class="row" style="align-items:baseline;gap:8px;margin:6px 0 10px"><span class="big" id="cornLb">—</span><span class="small" id="cornPct">No lid-sensor reading yet</span></div>
-    <div class="bar" role="img" id="cornBarWrap" aria-label="Corn level unknown"><div id="cornBar"></div></div>
+  <div class="duo" style="margin-top:14px">
+    <div class="panel">
+      <span class="small">Corn left</span>
+      <span class="big" id="cornLb" style="margin:6px 0 2px">—</span>
+      <span class="small" id="cornPct" style="margin-bottom:10px">No sensor yet</span>
+      <div class="bar" role="img" id="cornBarWrap" aria-label="Corn level unknown" style="margin-top:auto"><div id="cornBar"></div></div>
+      <span class="small" id="cornAge" style="font-size:11px;margin-top:6px"></span>
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:baseline"><span class="small">Total dropped</span><button class="linkbtn" id="btnTotalReset" type="button">Reset</button></div>
+      <span class="big" id="totCups" style="margin:6px 0 2px">—</span>
+      <span class="small" id="totSub">waiting for the feeder</span>
+    </div>
   </div>
+  <dialog id="dlgReset" aria-labelledby="dlgResetTitle">
+    <h2 id="dlgResetTitle" style="font-size:22px">Reset the total?</h2>
+    <p class="small" style="font-size:14px;margin:8px 0 16px">This sets the running total of corn dropped back to zero. It can't be undone.</p>
+    <div class="row"><button class="secondary" id="dlgCancel" type="button" style="flex:1">Cancel</button><button class="danger" id="dlgConfirm" type="button">Reset to zero</button></div>
+  </dialog>
 
   <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:12px">
     <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Drop corn now</h2><span class="small">Amount</span></div>
@@ -257,7 +279,7 @@ a{color:var(--blaze)}
     const age = Date.now() - lastStatusAt;
     if (age > OFFLINE_AFTER_MS) setConn("bad", `Feeder silent for ${ago(lastStatusAt)}`);
     else setConn("ok", `Online · checked in ${ago(lastStatusAt)}`);
-    $("cornAge").textContent = lastStatus && lastStatus.corn_mm !== undefined ? `Lid sensor · ${ago(lastStatusAt)}` : "";
+    $("cornAge").textContent = lastStatus && lastStatus.corn_mm !== undefined ? ago(lastStatusAt) : "";
   }
   setInterval(refreshConn, 20000);
 
@@ -283,7 +305,16 @@ a{color:var(--blaze)}
       $("tBattSub").textContent = valid ? d.batt_v.toFixed(2) + " V" : "not connected";
     }
     if (typeof d.rssi === "number") { $("tSig").textContent = sigLabel(d.rssi); $("tSigSub").textContent = d.rssi + " dBm"; }
-    if (d.last_drop > 1600000000) { $("tDrop").textContent = clock(d.last_drop).replace(" ", ""); $("tDropSub").textContent = `${d.pockets_total} pockets total`; }
+    if (d.last_drop > 1600000000) {
+      $("tDrop").textContent = clock(d.last_drop).replace(" ", "");
+      $("tDropSub").textContent = new Date(d.last_drop * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+    }
+    if (typeof d.pockets_total === "number") {
+      $("totCups").textContent = d.pockets_total ? cupsText(d.pockets_total) : "0 cups";
+      const lb = d.pockets_total * 0.25 * 0.376;   // shelled corn: 56 lb/bu = ~0.38 lb per cup
+      const since = d.total_since > 1600000000 ? " · since " + new Date(d.total_since * 1000).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "";
+      $("totSub").textContent = `${d.pockets_total} pockets · ~${lb.toFixed(1)} lb${since}`;
+    }
     if (typeof d.corn_pct === "number" && d.corn_pct >= 0) {
       $("cornLb").textContent = `~${Math.round(d.corn_lb)} lb`;
       $("cornPct").textContent = `${Math.round(d.corn_pct)}% full`;
@@ -325,7 +356,9 @@ a{color:var(--blaze)}
     note("warn", `Sent. Waiting for the feeder to drop ${label}…`);
   };
   function onEvent(d) {
-    if (d.event === "sched_saved") {
+    if (d.event === "total_reset") {
+      addLog("Total dropped reset to zero");
+    } else if (d.event === "sched_saved") {
       if (schedSaving) { clearTimeout(schedSaving); schedSaving = null; }
       schedNote("ok", "Saved on the feeder.");
       addLog("Feeding schedule updated");
@@ -412,6 +445,15 @@ a{color:var(--blaze)}
       tm.textContent = new Date(e.t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
       li.append(s, tm); ol.appendChild(li);
     }
+  }
+
+  // ---------- running total reset (with confirmation) ----------
+  $("btnTotalReset").onclick = () => { if (typeof $("dlgReset").showModal === "function") $("dlgReset").showModal(); else if (confirm("Reset the total to zero?")) doReset(); };
+  $("dlgCancel").onclick = () => $("dlgReset").close();
+  $("dlgConfirm").onclick = () => { $("dlgReset").close(); doReset(); };
+  function doReset() {
+    if (send("total reset")) { $("totSub").textContent = "Resetting…"; }
+    else { $("totSub").textContent = "Not connected. The reset was not sent."; }
   }
 
   // ---------- other buttons ----------
