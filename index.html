@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14160f">
-<title>Deer Feeder</title>
+<meta name="apple-mobile-web-app-title" content="SI Feeder">
+<meta name="application-name" content="SI Feeder">
+<title>SI 10-Gallon Feeder</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -92,7 +94,8 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 
 <!-- ============ SIGN IN ============ -->
 <section id="signin" class="hidden" aria-labelledby="si-title">
-  <h1 id="si-title">Connect to your feeder</h1>
+  <h1 id="si-title">SI 10-Gallon Feeder</h1>
+  <p class="small" style="margin:6px 0 0">Connect to your feeder</p>
   <p class="small">Use the <strong>feeder-app</strong> login from your HiveMQ console. It's saved only on this phone.</p>
   <form id="siForm" class="panel" autocomplete="on">
     <label for="siHost">Broker address</label>
@@ -104,7 +107,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     <label for="siFeeder">Feeder ID</label>
     <input id="siFeeder" type="text" autocapitalize="characters" spellcheck="false" required>
     <label for="siName">Feeder name</label>
-    <input id="siName" type="text" placeholder="Ridge Feeder">
+    <input id="siName" type="text" placeholder="SI 10-Gallon Feeder">
     <div class="err" id="siErr" role="alert"></div>
     <button class="primary" type="submit" style="margin-top:6px">Connect</button>
   </form>
@@ -114,7 +117,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 <section id="home" class="hidden" aria-labelledby="feederName">
   <div class="top">
     <div>
-      <h1 id="feederName">Feeder</h1>
+      <h1 id="feederName" style="font-size:clamp(26px,7.4vw,36px)">Feeder</h1>
       <div class="conn" aria-live="polite"><span class="dot" id="connDot"></span><span id="connText">Connecting…</span></div>
     </div>
     <div class="row">
@@ -213,6 +216,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   };
 
   let client = null, cfg = store.get("cfg"), lastStatusAt = 0, lastStatus = null;
+  if (cfg && (!cfg.name || cfg.name === "Ridge Feeder")) { cfg.name = "SI 10-Gallon Feeder"; store.set("cfg", cfg); }   // product renamed
   let amount = store.get("amount", 4), pending = null, log = store.get("log", []);
 
   // ---------- views ----------
@@ -227,7 +231,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     e.preventDefault();
     cfg = { host: $("siHost").value.trim().replace(/^(wss?|mqtts?|https?):\/\//, "").replace(/[\/:].*$/, ""),
             user: $("siUser").value.trim(), pass: $("siPass").value,
-            feeder: $("siFeeder").value.trim().toUpperCase(), name: $("siName").value.trim() || "Ridge Feeder" };
+            feeder: $("siFeeder").value.trim().toUpperCase(), name: $("siName").value.trim() || "SI 10-Gallon Feeder" };
     $("siErr").textContent = "";
     connect(true);
   });
