@@ -66,6 +66,16 @@ input[type=text],input[type=password]{width:100%;height:48px;border-radius:12px;
 .row{display:flex;gap:10px;align-items:center}
 .err{color:var(--bad);font-size:14px;margin-top:10px;min-height:20px}
 a{color:var(--blaze)}
+/* schedule */
+.srow{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.srow:first-child{border-top:none}
+.srow.off input[type=time],.srow.off select{opacity:.45}
+.srow input[type=time],.srow select{width:100%;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--ground);color:var(--text);padding:0 10px;font-size:16px;font-family:var(--body);color-scheme:dark}
+.toggle{width:44px;height:28px;border-radius:14px;border:1px solid var(--line);background:var(--ground);position:relative;padding:0}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--muted);transition:left .15s ease}
+.toggle[aria-checked="true"]{background:#3a2616;border-color:var(--blaze)}
+.toggle[aria-checked="true"]::after{left:19px;background:var(--blaze)}
+@media (prefers-reduced-motion:reduce){.toggle::after{transition:none}}
 @media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
 </style>
 </head>
@@ -129,6 +139,14 @@ a{color:var(--blaze)}
       <span id="btnDropText">Drop 1 cup</span>
     </button>
     <div id="dropNote" class="note hidden" role="status"></div>
+  </div>
+
+  <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Feeding times</h2><span class="small" id="schedNext"></span></div>
+    <div id="schedRows" role="list" aria-label="Feeding times"></div>
+    <button class="primary" id="btnSchedSave" style="height:48px;font-size:19px" disabled>Save to feeder</button>
+    <div id="schedNote" class="note hidden" role="status"></div>
+    <p class="small" style="margin:0">Up to six times a day, using the feeder's clock (US Central). The schedule is stored on the feeder, so it keeps feeding even without signal.</p>
   </div>
 
   <div class="panel" style="margin-top:14px">
@@ -274,6 +292,7 @@ a{color:var(--blaze)}
       if (d.corn_pct < 15) { $("cornPct").textContent += " · refill soon"; $("cornBar").style.background = "var(--bad)"; }
       else $("cornBar").style.background = "";
     }
+    if (Array.isArray(d.sched)) onSchedFromFeeder(d.sched, d.clock_ok);
     if (typeof d.lat === "number") {
       $("locText").textContent = `${Math.abs(d.lat).toFixed(5)}° ${d.lat >= 0 ? "N" : "S"}, ${Math.abs(d.lon).toFixed(5)}° ${d.lon >= 0 ? "E" : "W"}`;
       $("locSub").textContent = d.fix_conf_m ? `Accurate to about ${Math.round(d.fix_conf_m)} m` : "";
@@ -306,13 +325,19 @@ a{color:var(--blaze)}
     note("warn", `Sent. Waiting for the feeder to drop ${label}…`);
   };
   function onEvent(d) {
-    if (d.event === "drop") {
+    if (d.event === "sched_saved") {
+      if (schedSaving) { clearTimeout(schedSaving); schedSaving = null; }
+      schedNote("ok", "Saved on the feeder.");
+      addLog("Feeding schedule updated");
+    } else if (d.event === "drop" && d.sched > 0) {
+      addLog(`Scheduled feeding: dropped ${cupsText(d.pockets)}`);
+    } else if (d.event === "drop") {
       addLog(`Dropped ${cupsText(d.pockets)} (${d.pockets} pockets)`);
       if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = false; note("ok", `Dropped ${cupsText(d.pockets)}.`); }
     } else if (d.event === "jam") {
-      addLog(`Jam after ${d.pockets} of ${d.requested} pockets`, true);
+      addLog(`${d.sched > 0 ? "Scheduled feeding jammed" : "Jam"} after ${d.pockets} of ${d.requested} pockets`, true);
       if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = false; }
-      note("bad", `The wheel jammed after ${cupsText(d.pockets)}. Check the wheel and the wiper before feeding again.`);
+      note("bad", `The wheel jammed after ${d.pockets ? cupsText(d.pockets) : "0 pockets"}. Check the wheel and the wiper before feeding again.`);
     } else if (d.event === "gps_failed") {
       addLog("GPS fix failed", true);
       $("locSub").textContent = "Last GPS attempt failed. Try again with a clearer view of the sky.";
@@ -320,6 +345,61 @@ a{color:var(--blaze)}
   }
   function cupsText(p) { const c = p / 4; const w = Math.floor(c), f = ["","¼","½","¾"][p % 4];
     return `${w ? w : ""}${f}${w ? "" : ""} ${c <= 1 ? "cup" : "cups"}`.trim(); }
+
+  // ---------- feeding schedule ----------
+  const MAX_SCHED = 6;
+  let sched = store.get("sched", null);           // [[on, minuteOfDay, pockets], ...] as last reported by the feeder
+  let draft = null, dirty = false, schedSaving = null;
+  const toHHMM = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+  const fromHHMM = t => { const [h, m] = (t || "").split(":").map(Number); return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null; };
+  const fmtTime = m => new Date(2000, 0, 1, Math.floor(m / 60), m % 60).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  function emptyDraft() { return Array.from({ length: MAX_SCHED }, () => ({ on: false, min: null, p: 4 })); }
+  function draftFrom(list) {
+    const d = emptyDraft();
+    (list || []).slice(0, MAX_SCHED).forEach((e, i) => { if (e[2] > 0) d[i] = { on: !!e[0], min: e[1], p: e[2] }; });
+    return d;
+  }
+  function renderSched() {
+    if (!draft) draft = draftFrom(sched);
+    const box = $("schedRows"); box.innerHTML = "";
+    draft.forEach((r, i) => {
+      const row = document.createElement("div"); row.className = "srow" + (r.on ? "" : " off"); row.setAttribute("role", "listitem");
+      const tg = document.createElement("button"); tg.type = "button"; tg.className = "toggle"; tg.setAttribute("role", "switch");
+      tg.setAttribute("aria-checked", String(r.on)); tg.setAttribute("aria-label", `Feeding time ${i + 1} ${r.on ? "on" : "off"}`);
+      tg.onclick = () => { if (!r.on && r.min === null) r.min = 6 * 60 + 30; r.on = !r.on; markDirty(); renderSched(); };
+      const tm = document.createElement("input"); tm.type = "time"; tm.value = r.min === null ? "" : toHHMM(r.min);
+      tm.setAttribute("aria-label", `Feeding time ${i + 1}`);
+      tm.onchange = () => { const m = fromHHMM(tm.value); r.min = m; if (m !== null) r.on = true; markDirty(); renderSched(); };
+      const sel = document.createElement("select"); sel.setAttribute("aria-label", `Amount for feeding time ${i + 1}`);
+      for (let p = 1; p <= 40; p++) { const o = document.createElement("option"); o.value = p; o.textContent = cupsText(p); if (p === r.p) o.selected = true; sel.appendChild(o); }
+      sel.onchange = () => { r.p = Number(sel.value); markDirty(); };
+      row.append(tg, tm, sel); box.appendChild(row);
+    });
+    renderNext();
+  }
+  function markDirty() { dirty = true; $("btnSchedSave").disabled = false; $("schedNote").classList.add("hidden"); }
+  function schedNote(kind, text) { const n = $("schedNote"); n.className = "note " + kind; n.textContent = text; }
+  function renderNext() {
+    const list = (dirty ? draft.map(r => [r.on ? 1 : 0, r.min ?? 0, r.min === null ? 0 : r.p]) : (sched || []));
+    const on = list.filter(e => e[0] && e[2] > 0);
+    if (!on.length) { $("schedNext").textContent = "No feeding times set"; return; }
+    const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes();
+    const next = on.map(e => ({ e, wait: (e[1] - nowMin + 1440) % 1440 || 1440 })).sort((a, b) => a.wait - b.wait)[0].e;
+    $("schedNext").textContent = `Next: ${fmtTime(next[1])} · ${cupsText(next[2])}`;
+  }
+  $("btnSchedSave").onclick = () => {
+    const parts = draft.map(r => r.min === null ? "0,0,0" : `${r.on ? 1 : 0},${Math.floor(r.min / 60) * 100 + r.min % 60},${r.p}`);
+    if (!send("sall " + parts.join(";"))) { schedNote("bad", "Not connected to the broker. The schedule was not sent."); return; }
+    $("btnSchedSave").disabled = true;
+    schedNote("warn", "Sent. Waiting for the feeder to confirm…");
+    clearTimeout(schedSaving);
+    schedSaving = setTimeout(() => { schedNote("warn", "No reply yet. The feeder will pick it up when it next checks in."); schedSaving = null; }, REPLY_TIMEOUT_MS);
+  };
+  function onSchedFromFeeder(list, clockOk) {
+    sched = list; store.set("sched", sched);
+    if (!dirty || schedSaving) { draft = draftFrom(sched); dirty = false; $("btnSchedSave").disabled = true; renderSched(); }
+    if (clockOk === 0) schedNote("warn", "The feeder's clock isn't set yet. It sets itself the first time it connects to the network; until then, scheduled feedings can't run.");
+  }
 
   // ---------- activity log ----------
   function addLog(text, bad) { log.unshift({ t: Date.now(), text, bad: !!bad }); log = log.slice(0, 15); store.set("log", log); renderLog(); }
@@ -344,7 +424,8 @@ a{color:var(--blaze)}
   $("btnSignOut").onclick = () => { if (client) client.end(true); client = null; store.del("cfg"); cfg = null; $("siPass").value = ""; show("signin"); };
 
   // ---------- start ----------
-  renderPills(); renderLog();
+  renderPills(); renderLog(); renderSched();
+  setInterval(renderNext, 60000);
   if (typeof mqtt === "undefined") { show("signin"); $("siErr").textContent = "The connection library didn't load. Check this phone's internet and reload."; }
   else if (cfg && cfg.pass) connect(false); else show("signin");
 })();
