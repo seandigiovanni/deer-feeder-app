@@ -13,6 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.16.0/dist/mqtt.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 :root{
   --ground:#14160f; --surface:#1e2118; --line:#2e3226; --text:#ece8dc; --muted:#a9a58f;
@@ -241,6 +242,19 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     <label>Feeder ID</label><div id="stFeeder" style="font-size:16px"></div>
     <label>Broker</label><div id="stHost" class="small" style="word-break:break-all"></div>
     <label>Signed in as</label><div id="stUser" style="font-size:16px"></div>
+  </div>
+  <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
+    <h2 style="font-size:20px">Feeder Wi-Fi</h2>
+    <p class="small" style="margin:0">For setup and troubleshooting at the feeder. <b>1.</b> Press the feeder's wake button. <b>2.</b> Join its Wi-Fi: scan this code with your phone's camera (or pick the network in Wi-Fi settings). <b>3.</b> Tap <b>Open service page</b>.</p>
+    <div style="display:flex;gap:14px;align-items:center">
+      <div id="wifiQr" style="background:#fff;padding:8px;border-radius:10px;flex:none;width:136px;height:136px" role="img" aria-label="QR code to join the feeder's Wi-Fi"></div>
+      <div style="min-width:0">
+        <span class="small">Network</span><div id="wifiSsid" style="font-size:16px;font-weight:600">-</div>
+        <span class="small">Password</span><div class="row" style="align-items:center;gap:8px"><span id="wifiPw" style="font-size:16px;font-weight:600;font-family:ui-monospace,monospace">-</span><button class="linkbtn" id="btnCopyPw" type="button">Copy</button></div>
+      </div>
+    </div>
+    <a class="primary" id="btnPortal" href="http://192.168.4.1" target="_blank" rel="noopener" style="display:grid;place-items:center;text-decoration:none;height:48px">Open service page</a>
+    <p class="small" style="margin:0">If your phone says the network has no internet, choose to stay connected. If you changed the Wi-Fi password on the service page, use your new password; this card shows the default.</p>
   </div>
   <button class="secondary" id="btnSignOut" style="margin-top:14px;width:100%;border-color:#6b2e24;color:#f4c4b8">Sign out and forget the password</button>
 </section>
@@ -723,7 +737,19 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   $("btnGps").onclick = () => {
     if (queueCmd("gps")) { $("locSub").textContent = asleep() ? `GPS fix queued for ${nextWakeText()}` : "Getting a fix (1–3 min)…"; addLog("Requested a GPS fix"); }
   };
-  $("btnSettings").onclick = () => { $("stName").value = cfg.name; $("stFeeder").textContent = cfg.feeder; $("stHost").textContent = cfg.host; $("stUser").textContent = cfg.user; show("settings"); };
+  $("btnSettings").onclick = () => { $("stName").value = cfg.name; $("stFeeder").textContent = cfg.feeder; $("stHost").textContent = cfg.host; $("stUser").textContent = cfg.user; renderWifiCard(); show("settings"); };
+  // Feeder Wi-Fi: network SI-Feeder-<last 4 of ID>, default password "feeder" + the same 4 characters
+  function renderWifiCard() {
+    const id = (cfg && cfg.feeder) || "";
+    const tail = id.slice(-4);
+    const ssid = "SI-Feeder-" + tail, pw = "feeder" + tail;
+    $("wifiSsid").textContent = ssid; $("wifiPw").textContent = pw;
+    const box = $("wifiQr"); box.innerHTML = "";
+    const esc = v => v.replace(/([\\;,:"])/g, "\\$1");
+    if (typeof QRCode === "function") new QRCode(box, { text: `WIFI:T:WPA;S:${esc(ssid)};P:${esc(pw)};;`, width: 120, height: 120, correctLevel: QRCode.CorrectLevel.M });
+    else box.textContent = "QR unavailable offline";
+    $("btnCopyPw").onclick = async () => { try { await navigator.clipboard.writeText(pw); $("btnCopyPw").textContent = "Copied"; setTimeout(() => $("btnCopyPw").textContent = "Copy", 1500); } catch { } };
+  }
   $("btnBack").onclick = () => { cfg.name = $("stName").value.trim() || cfg.name; store.set("cfg", cfg); $("feederName").textContent = cfg.name; show("home"); };
   $("btnSignOut").onclick = () => { if (client) client.end(true); client = null; store.del("cfg"); cfg = null; $("siPass").value = ""; show("signin"); };
 
