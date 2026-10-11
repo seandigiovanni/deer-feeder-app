@@ -76,6 +76,7 @@ a{color:var(--blaze)}
 dialog{border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--text);padding:18px;max-width:340px;width:calc(100% - 40px)}
 dialog::backdrop{background:rgba(0,0,0,.6)}
 .danger{height:48px;border:none;border-radius:12px;background:var(--bad);color:#1a0806;font-weight:600;font-size:16px;flex:1}
+#ciSlider{width:100%;height:36px;accent-color:var(--blaze);margin:0}
 /* schedule */
 .srow{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .srow:first-child{border-top:none}
@@ -176,9 +177,12 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 
   <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
     <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Check-in</h2><span class="small" id="ciNow"></span></div>
-    <div class="pills" id="ciPills" style="grid-template-columns:repeat(5,minmax(0,1fr));gap:6px" role="radiogroup" aria-label="How often the feeder checks in"></div>
+    <div class="row" style="align-items:baseline;gap:8px"><span class="big" id="ciVal">—</span><span class="small" id="ciHint"></span></div>
+    <input type="range" id="ciSlider" min="0" max="60" step="5" value="15" aria-label="Minutes between check-ins">
+    <div class="row" style="justify-content:space-between" aria-hidden="true"><span class="small">Always on</span><span class="small">15</span><span class="small">30</span><span class="small">45</span><span class="small">60 min</span></div>
+    <button class="secondary" id="btnStayAwake" type="button" style="height:44px">Stay awake 10 min</button>
     <div id="ciNote" class="note hidden" role="status"></div>
-    <p class="small" style="margin:0">Between check-ins the feeder sleeps to save battery. Feeding times still run exactly on time; "Drop corn now" and other changes wait for the next check-in. "Always on" responds instantly but uses far more power.</p>
+    <p class="small" style="margin:0">"Stay awake" keeps the feeder responding instantly for 10 minutes, starting at its next check-in (the wake button on the feeder does the same right away). Between check-ins the feeder sleeps to save battery. Feeding times still run exactly on time; "Drop corn now" and other changes wait for the next check-in. "Always on" responds instantly but uses far more power.</p>
   </div>
 
   <div class="panel" style="margin-top:14px">
@@ -319,6 +323,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       if (Date.now() > due + 5 * 60 * 1000) setConn("bad", `Missed its check-in (due ${clock(lastStatus.next_wake)})`);
       else setConn("ok", `Asleep · next check-in ${clock(lastStatus.next_wake)}`);
     } else if (age > (ci ? (ci + 5) * 60 * 1000 : OFFLINE_AFTER_MS)) setConn("bad", `Feeder silent for ${ago(lastStatusAt)}`);
+    else if (lastStatus && lastStatus.awake_until > Date.now() / 1000) setConn("ok", `Online · awake until ${clock(lastStatus.awake_until)}`);
     else setConn("ok", `Online${ci ? " (awake)" : ""} · checked in ${ago(lastStatusAt)}`);
     $("cornAge").textContent = lastStatus && lastStatus.corn_mm !== undefined ? ago(lastStatusAt) : "";
   }
@@ -476,28 +481,42 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (clockOk === 0) schedNote("warn", "The feeder's clock isn't set yet. It sets itself the first time it connects to the network; until then, scheduled feedings can't run.");
   }
 
-  // ---------- check-in interval ----------
-  const CHECKINS = [{ m: 0, label: "Always on" }, { m: 15, label: "15 min" }, { m: 30, label: "30 min" }, { m: 45, label: "45 min" }, { m: 60, label: "60 min" }];
-  let ciSent = null;
+  // ---------- check-in interval (slider: Always on, then 5 to 60 minutes) ----------
+  let ciSent = null, ciDragging = false;
+  const ciLabel = m => m ? `Every ${m} min` : "Always on";
+  function ciHint(m) {
+    if (!m) return "instant response · most power";
+    if (m <= 10) return "quick response · more power";
+    if (m <= 30) return "good balance";
+    return "longest battery life";
+  }
+  function showCi(m) {
+    $("ciVal").textContent = ciLabel(m);
+    $("ciHint").textContent = ciHint(m);
+    $("ciSlider").setAttribute("aria-valuetext", ciLabel(m));
+  }
+  $("ciSlider").addEventListener("input", () => { ciDragging = true; showCi(Number($("ciSlider").value)); });
+  $("ciSlider").addEventListener("change", () => {
+    ciDragging = false;
+    const m = Number($("ciSlider").value);
+    const cur = lastStatus && typeof lastStatus.checkin_min === "number" ? lastStatus.checkin_min : null;
+    if (m === cur) { ciNote("ok", "No change."); return; }
+    if (!queueCmd("checkin " + m)) { ciNote("bad", "Not connected to the broker. The change was not sent."); if (cur !== null) { $("ciSlider").value = cur; showCi(cur); } return; }
+    ciSent = m;
+    ciNote("warn", queuedMsg(`switch to ${m ? "checking in every " + m + " minutes" : "always on"}`) || "Sent. Waiting for the feeder to confirm…");
+  });
   function renderCheckin() {
     const cur = lastStatus && typeof lastStatus.checkin_min === "number" ? lastStatus.checkin_min : null;
-    const box = $("ciPills"); box.innerHTML = "";
-    CHECKINS.forEach(c => {
-      const b = document.createElement("button"); b.type = "button"; b.className = "pill"; b.textContent = c.label;
-      b.style.cssText = "font-size:13px;white-space:nowrap;padding:0 2px";
-      b.setAttribute("role", "radio"); b.setAttribute("aria-checked", String(cur === c.m));
-      b.onclick = () => {
-        if (cur === c.m) return;
-        if (!queueCmd("checkin " + c.m)) { ciNote("bad", "Not connected to the broker. The change was not sent."); return; }
-        ciSent = c.m;
-        ciNote("warn", queuedMsg(`switch to ${c.m ? "checking in every " + c.label : "always on"}`) || "Sent. Waiting for the feeder to confirm…");
-      };
-      box.appendChild(b);
-    });
-    $("ciNow").textContent = cur === null ? "" : (cur ? `Every ${cur} min` : "Always on");
+    $("ciNow").textContent = cur === null ? "" : `Feeder: ${ciLabel(cur).toLowerCase()}`;
+    if (!ciDragging && ciSent === null && cur !== null) { $("ciSlider").value = cur; showCi(cur); }
     if (ciSent !== null && cur === ciSent) { ciNote("ok", "Saved on the feeder."); ciSent = null; }
+    if (cur === null && !ciDragging) showCi(Number($("ciSlider").value));
   }
   function ciNote(kind, text) { const n = $("ciNote"); n.className = "note " + kind; n.textContent = text; }
+  $("btnStayAwake").onclick = () => {
+    if (!queueCmd("awake 10")) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
+    ciNote("warn", queuedMsg("stay awake for 10 minutes") || "Sent. The feeder will stay awake for 10 minutes.");
+  };
 
   // ---------- activity log ----------
   function addLog(text, bad) { log.unshift({ t: Date.now(), text, bad: !!bad }); log = log.slice(0, 15); store.set("log", log); renderLog(); }
