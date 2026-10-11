@@ -83,6 +83,9 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 .danger{height:48px;border:none;border-radius:12px;background:var(--bad);color:#1a0806;font-weight:600;font-size:16px;flex:1}
 #ciSlider{width:100%;height:36px;accent-color:var(--blaze);margin:0}
 #ciSlider:disabled{opacity:.45;filter:grayscale(.6)}
+#awPills .pill:disabled,#btnSleepNow:disabled,#pills .pill:disabled,#btnDrop:disabled{opacity:.45}
+#dropLock[aria-pressed="true"]{border-color:var(--blaze);color:#f7c9a6}
+.pend{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;border:1px dashed var(--line);border-radius:10px;font-size:14px}
 #ciLock[aria-pressed="true"]{border-color:var(--blaze);color:#f7c9a6}
 /* schedule */
 .srow{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
@@ -177,7 +180,10 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   </dialog>
 
   <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:12px">
-    <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Drop corn now</h2><span class="small">Amount</span></div>
+    <div class="row" style="justify-content:space-between;align-items:center"><h2>Drop corn now</h2>
+      <button class="linkbtn" id="dropLock" type="button" aria-pressed="false" style="display:flex;align-items:center;gap:6px">
+        <svg id="dropLockIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span id="dropLockText">Unlock</span></button></div>
     <div class="pills" role="group" aria-label="Amount to drop" id="pills"></div>
     <button class="primary" id="btnDrop">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
@@ -212,6 +218,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     <div class="pills" id="awPills" style="grid-template-columns:repeat(4,minmax(0,1fr))" role="group" aria-label="Stay awake for"></div>
     <button class="linkbtn hidden" id="btnAwakeCancel" type="button" style="height:40px">Go back to the sleep schedule now</button>
     <button class="secondary" id="btnSleepNow" type="button" style="height:44px">Go to sleep now</button>
+    <div id="ciPending" class="hidden" style="display:flex;flex-direction:column;gap:6px"></div>
     <div id="ciNote" class="note hidden" role="status"></div>
     <p class="small" style="margin:0">"Stay awake" keeps the feeder responding instantly for the time you pick, starting at its next check-in, then it returns to its check-in schedule. The wake button on the feeder gives 10 minutes right away. Between check-ins the feeder sleeps to save battery. Feeding times still run exactly on time; "Drop corn now" and other changes wait for the next check-in. "Always on" responds instantly but uses far more power.</p>
   </div>
@@ -314,6 +321,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     queueState = queueState.filter(e => e.id > done);
     queueState.push({ id: Date.now(), c: cmd });
     client.publish(topic("q"), JSON.stringify({ q: queueState }), { qos: 1, retain: true });
+    setTimeout(renderPending, 0);
     return true;
   }
   const asleep = () => !!(lastStatus && lastStatus.checkin_min > 0 && lastStatus.awake === 0);
@@ -326,7 +334,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   }
   function handle(t, text) {
     let d; try { d = JSON.parse(text); } catch { return; }
-    if (t.endsWith("/q")) { queueState = Array.isArray(d.q) ? d.q : []; return; }
+    if (t.endsWith("/q")) { queueState = Array.isArray(d.q) ? d.q : []; renderPending(); return; }
     if (t.endsWith("/status")) {
       lastStatusAt = Date.now(); lastStatus = d; renderStatus(d); refreshConn();
       if (queueState.length && typeof d.cmd_done === "number" && queueState.every(e => e.id <= d.cmd_done)) {
@@ -396,7 +404,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       else $("cornBar").style.background = "";
     }
     if (Array.isArray(d.sched)) onSchedFromFeeder(d.sched, d.clock_ok);
-    renderCheckin(); renderAwake();
+    renderCheckin(); renderAwake(); renderPending();
     if (typeof d.lat === "number") {
       $("locText").textContent = `${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}`;
       $("locSub").textContent = d.fix_conf_m ? `Accurate to about ${Math.round(d.fix_conf_m)} m` : "";
@@ -411,20 +419,37 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       const b = document.createElement("button");
       b.className = "pill"; b.type = "button"; b.textContent = a.label;
       b.setAttribute("aria-pressed", String(a.p === amount));
-      b.onclick = () => { amount = a.p; store.set("amount", amount); renderPills(); };
+      b.onclick = () => { amount = a.p; store.set("amount", amount); renderPills(); setDropLocked(false); };   // picking an amount restarts the 30 s
+      b.disabled = typeof dropLocked !== "undefined" ? dropLocked : true;
       $("pills").appendChild(b);
     }
     const cur = AMOUNTS.find(a => a.p === amount) || AMOUNTS[2];
     $("btnDropText").textContent = "Drop " + cur.label;
   }
+  // Drop card lock: amount + Drop button stay disabled until Unlock; re-locks after a drop or 30 s
+  let dropLocked = true, dropLockTimer = null;
+  function setDropLocked(locked) {
+    dropLocked = locked;
+    $("pills").querySelectorAll("button").forEach(b => b.disabled = locked);
+    $("btnDrop").disabled = locked || !!pending;
+    $("dropLock").setAttribute("aria-pressed", String(!locked));
+    $("dropLockText").textContent = locked ? "Unlock" : "Lock";
+    $("dropLockIcon").innerHTML = locked
+      ? '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+      : '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>';
+    clearTimeout(dropLockTimer);
+    if (!locked) dropLockTimer = setTimeout(() => setDropLocked(true), 30000);
+  }
+  $("dropLock").onclick = () => setDropLocked(!dropLocked);
   function note(kind, text) { const n = $("dropNote"); n.className = "note " + kind; n.textContent = text; }
   $("btnDrop").onclick = () => {
-    if (pending) return;
+    if (pending || dropLocked) return;
+    setDropLocked(true);
     if (!queueCmd("drop " + amount)) { note("bad", "Not connected to the broker. The drop was not sent."); return; }
     const label = (AMOUNTS.find(a => a.p === amount) || {}).label;
     pending = { pockets: amount, timer: setTimeout(() => {
       note("warn", "No reply from the feeder yet. The drop stays queued until it checks in.");
-      pending = null; $("btnDrop").disabled = false; }, replyWaitMs()) };
+      pending = null; $("btnDrop").disabled = dropLocked; }, replyWaitMs()) };
     $("btnDrop").disabled = true;
     note("warn", queuedMsg(`drop ${label}`) || `Sent. Waiting for the feeder to drop ${label}…`);
   };
@@ -439,10 +464,10 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       addLog(`Scheduled feeding: dropped ${cupsText(d.pockets)}`);
     } else if (d.event === "drop") {
       addLog(`Dropped ${cupsText(d.pockets)} (${d.pockets} pockets)`);
-      if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = false; note("ok", `Dropped ${cupsText(d.pockets)}.`); }
+      if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = dropLocked; note("ok", `Dropped ${cupsText(d.pockets)}.`); }
     } else if (d.event === "jam") {
       addLog(`${d.sched > 0 ? "Scheduled feeding jammed" : "Jam"} after ${d.pockets} of ${d.requested} pockets`, true);
-      if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = false; }
+      if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = dropLocked; }
       note("bad", `The wheel jammed after ${d.pockets ? cupsText(d.pockets) : "0 pockets"}. Check the wheel and the wiper before feeding again.`);
     } else if (d.event === "gps_failed") {
       addLog("GPS fix failed", true);
@@ -527,11 +552,14 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     $("ciHint").textContent = ciHint(m);
     $("ciSlider").setAttribute("aria-valuetext", ciLabel(m));
   }
-  // Slider is locked so scrolling past it can't change the setting. Unlock re-locks after a change or 30 s.
+  // The slider, Stay awake and Go to sleep controls are locked so scrolling past them can't change anything.
+  // Unlock re-locks after any change or after 30 s.
   let ciLockTimer = null;
   function setCiLocked(locked) {
     const sl = $("ciSlider");
     sl.disabled = locked;
+    $("awPills").querySelectorAll("button").forEach(b => b.disabled = locked);
+    $("btnSleepNow").disabled = locked;
     sl.setAttribute("aria-label", "Minutes between check-ins" + (locked ? " (locked)" : ""));
     $("ciLock").setAttribute("aria-pressed", String(!locked));
     $("ciLockText").textContent = locked ? "Unlock" : "Lock";
@@ -567,6 +595,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     const b = document.createElement("button"); b.type = "button"; b.className = "pill"; b.textContent = o.label;
     b.setAttribute("aria-label", `Stay awake ${o.long}`);
     b.onclick = () => {
+      setCiLocked(true);
       if (!queueCmd("awake " + o.m)) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
       ciNote("warn", asleep()
         ? `Queued. Starting at its next check-in (about ${nextWakeText()}), the feeder will stay awake for ${o.long}, then return to its check-in schedule.`
@@ -587,10 +616,34 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     else if (confirm("Put the feeder to sleep?")) doSleep();
   };
   $("dlgSleepCancel").onclick = () => $("dlgSleep").close();
-  $("dlgSleepConfirm").onclick = () => { $("dlgSleep").close(); doSleep(); };
+  $("dlgSleepConfirm").onclick = () => { $("dlgSleep").close(); setCiLocked(true); doSleep(); };
   function doSleep() {
     if (!queueCmd("sleep")) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
     ciNote("warn", asleep() ? "Queued. The feeder is already asleep; it will go straight back to sleep at its next check-in." : "Sent. The feeder is going to sleep.");
+  }
+  // Show queued (not yet run) stay-awake / sleep requests, each with a Cancel button
+  function renderPending() {
+    const done = (lastStatus && lastStatus.cmd_done) || 0;
+    const items = queueState.filter(e => e.id > done && /^(awake \d+|sleep)$/.test(e.c));
+    const box = $("ciPending"); box.innerHTML = "";
+    box.classList.toggle("hidden", !items.length);
+    items.forEach(e => {
+      const m = /^awake (\d+)$/.exec(e.c);
+      const what = m ? (Number(m[1]) === 0 ? "Go back to the sleep schedule" : `Stay awake ${Number(m[1]) >= 60 ? Number(m[1]) / 60 + " h" : m[1] + " min"}`) : "Go to sleep";
+      const row = document.createElement("div"); row.className = "pend";
+      const t = document.createElement("span"); t.textContent = `Queued: ${what}${asleep() ? ` · runs about ${nextWakeText()}` : ""}`;
+      const c = document.createElement("button"); c.type = "button"; c.className = "linkbtn"; c.textContent = "Cancel";
+      c.setAttribute("aria-label", `Cancel queued request: ${what}`);
+      c.onclick = () => cancelQueued(e.id, what);
+      row.append(t, c); box.appendChild(row);
+    });
+  }
+  function cancelQueued(id, what) {
+    if (!client || !client.connected) { ciNote("bad", "Not connected to the broker. Nothing was changed."); return; }
+    queueState = queueState.filter(e => e.id !== id);
+    client.publish(topic("q"), JSON.stringify({ q: queueState }), { qos: 1, retain: true });
+    ciNote("ok", `Cancelled: ${what}. (If the feeder already picked it up, use "Go back to the sleep schedule now".)`);
+    renderPending();
   }
   function renderAwake() {
     const until = lastStatus && lastStatus.awake_until > Date.now() / 1000 ? lastStatus.awake_until : 0;
@@ -640,7 +693,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   $("btnSignOut").onclick = () => { if (client) client.end(true); client = null; store.del("cfg"); cfg = null; $("siPass").value = ""; show("signin"); };
 
   // ---------- start ----------
-  renderPills(); renderLog(); applyLogOpen(); renderSched(); applySchedOpen(); renderCheckin(); setCiLocked(true);
+  renderPills(); renderLog(); applyLogOpen(); renderSched(); applySchedOpen(); renderCheckin(); setCiLocked(true); setDropLocked(true);
   setInterval(renderNext, 60000);
   if (typeof mqtt === "undefined") { show("signin"); $("siErr").textContent = "The connection library didn't load. Check this phone's internet and reload."; }
   else if (cfg && cfg.pass) connect(false); else show("signin");
