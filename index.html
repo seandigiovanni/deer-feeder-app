@@ -189,6 +189,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
       <span id="btnDropText">Drop 1 cup</span>
     </button>
+    <div id="dropPending" class="hidden" style="display:flex;flex-direction:column;gap:6px" aria-live="polite"></div>
     <div id="dropNote" class="note hidden" role="status"></div>
   </div>
 
@@ -456,6 +457,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     setDropLocked(true);
     if (!queueCmd("drop " + amount)) { note("bad", "Not connected to the broker. The drop was not sent."); return; }
     const label = (AMOUNTS.find(a => a.p === amount) || {}).label;
+    if (asleep()) { note("warn", queuedMsg(`drop ${label}`)); return; }   // listed under the button until it runs
     pending = { pockets: amount, timer: setTimeout(() => {
       note("warn", "No reply from the feeder yet. The drop stays queued until it checks in.");
       pending = null; $("btnDrop").disabled = dropLocked; }, replyWaitMs()) };
@@ -472,6 +474,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     } else if (d.event === "drop" && d.sched > 0) {
       addLog(`Scheduled feeding: dropped ${cupsText(d.pockets)}`);
     } else if (d.event === "drop") {
+      setTimeout(renderPending, 0);
       addLog(`Dropped ${cupsText(d.pockets)} (${d.pockets} pockets)`);
       if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = dropLocked; note("ok", `Dropped ${cupsText(d.pockets)}.`); }
     } else if (d.event === "jam") {
@@ -633,6 +636,28 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   // Show queued (not yet run) stay-awake / sleep requests, each with a Cancel button
   function renderPending() {
     const done = (lastStatus && lastStatus.cmd_done) || 0;
+    store.set("queue", queueState);
+    // queued drops: stay listed until the feeder runs them, even after closing/reopening the app
+    const drops = queueState.filter(e => e.id > done && /^drop \d+$/.test(e.c));
+    const dbox = $("dropPending"); dbox.innerHTML = "";
+    dbox.classList.toggle("hidden", !drops.length);
+    if (drops.length > 1) {
+      const sum = drops.reduce((a, e) => a + Number(e.c.split(" ")[1]), 0);
+      const h = document.createElement("span"); h.className = "small";
+      h.textContent = `${drops.length} drops waiting · ${cupsText(sum)} in total`;
+      dbox.appendChild(h);
+    }
+    drops.forEach(e => {
+      const p = Number(e.c.split(" ")[1]);
+      const what = `Drop ${cupsText(p)}`;
+      const row = document.createElement("div"); row.className = "pend";
+      const t = document.createElement("span");
+      t.textContent = asleep() ? `Waiting: ${what} · at the next check-in, about ${nextWakeText()}` : `Waiting: ${what} · sending to the feeder…`;
+      const c = document.createElement("button"); c.type = "button"; c.className = "linkbtn"; c.textContent = "Cancel";
+      c.setAttribute("aria-label", `Cancel queued request: ${what}`);
+      c.onclick = () => cancelQueued(e.id, what, "drop");
+      row.append(t, c); dbox.appendChild(row);
+    });
     const items = queueState.filter(e => e.id > done && /^(awake \d+|sleep)$/.test(e.c));
     const box = $("ciPending"); box.innerHTML = "";
     box.classList.toggle("hidden", !items.length);
@@ -647,11 +672,12 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       row.append(t, c); box.appendChild(row);
     });
   }
-  function cancelQueued(id, what) {
-    if (!client || !client.connected) { ciNote("bad", "Not connected to the broker. Nothing was changed."); return; }
+  function cancelQueued(id, what, kind) {
+    const say = kind === "drop" ? note : ciNote;
+    if (!client || !client.connected) { say("bad", "Not connected to the broker. Nothing was changed."); return; }
     queueState = queueState.filter(e => e.id !== id);
     client.publish(topic("q"), JSON.stringify({ q: queueState }), { qos: 1, retain: true });
-    ciNote("ok", `Cancelled: ${what}. (If the feeder already picked it up, use "Go back to the sleep schedule now".)`);
+    say("ok", kind === "drop" ? `Cancelled: ${what}.` : `Cancelled: ${what}. (If the feeder already picked it up, use "Go back to the sleep schedule now".)`);
     renderPending();
   }
   function renderAwake() {
@@ -704,8 +730,10 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   // ---------- start ----------
   renderPills(); renderLog(); applyLogOpen(); renderSched(); applySchedOpen(); renderCheckin(); setCiLocked(true); setDropLocked(true);
   (() => {                                            // last known reading, until fresh data arrives
+    queueState = store.get("queue", []) || [];
     const c = store.get("lastStatus", null);
     if (c && c.d) { lastStatus = c.d; lastStatusAt = c.at; try { renderStatus(c.d); } catch (e) {} refreshConn(); }
+    renderPending();
   })();
   setInterval(renderNext, 60000);
   if (typeof mqtt === "undefined") { show("signin"); $("siErr").textContent = "The connection library didn't load. Check this phone's internet and reload."; }
