@@ -259,7 +259,12 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     del(k) { try { localStorage.removeItem("feeder." + k); } catch {} }
   };
 
-  let client = null, cfg = store.get("cfg"), lastStatusAt = 0, lastStatus = null;
+  let client = null, cfg = store.get("cfg"), lastStatusAt = 0, lastStatus = null, liveStatus = false;
+  function appClientId() {
+    let id = store.get("clientId", null);
+    if (!id) { id = "feeder-app-" + Math.random().toString(16).slice(2, 10); store.set("clientId", id); }
+    return id;
+  }
   if (cfg && (!cfg.name || cfg.name === "Ridge Feeder")) { cfg.name = "SI 10-Gallon Feeder"; store.set("cfg", cfg); }   // product renamed
   let amount = store.get("amount", 4), pending = null, log = store.get("log", []);
 
@@ -289,8 +294,10 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (!fromSignIn) show("home");
     client = mqtt.connect(`wss://${cfg.host}:8884/mqtt`, {
       username: cfg.user, password: cfg.pass, protocolVersion: 4,
-      clientId: "feeder-app-" + Math.random().toString(16).slice(2, 10),
-      clean: true, reconnectPeriod: 5000, connectTimeout: 15000, keepalive: 60
+      // Same client id every time + clean:false = a persistent session: the broker holds the feeder's
+      // status and event messages sent while the app was closed and delivers them when it reopens.
+      clientId: appClientId(),
+      clean: false, reconnectPeriod: 5000, connectTimeout: 15000, keepalive: 60
     });
     client.on("connect", () => {
       if (fromSignIn) { store.set("cfg", cfg); fromSignIn = false; show("home"); }
@@ -336,7 +343,8 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     let d; try { d = JSON.parse(text); } catch { return; }
     if (t.endsWith("/q")) { queueState = Array.isArray(d.q) ? d.q : []; renderPending(); return; }
     if (t.endsWith("/status")) {
-      lastStatusAt = Date.now(); lastStatus = d; renderStatus(d); refreshConn();
+      lastStatusAt = Date.now(); lastStatus = d; liveStatus = true; renderStatus(d); refreshConn();
+      store.set("lastStatus", { at: lastStatusAt, d });   // shown instantly next time the app opens
       if (queueState.length && typeof d.cmd_done === "number" && queueState.every(e => e.id <= d.cmd_done)) {
         queueState = [];
         client.publish(topic("q"), JSON.stringify({ q: [] }), { qos: 1, retain: true });   // all done: clear it
@@ -352,6 +360,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (!lastStatusAt) return;
     const age = Date.now() - lastStatusAt;
     const ci = (lastStatus && lastStatus.checkin_min) || 0;
+    if (!liveStatus) { setConn("warn", `Showing the last reading from ${ago(lastStatusAt)} · waiting for the feeder's next check-in`); return; }
     if (asleep()) {
       const due = lastStatus.next_wake * 1000;
       if (Date.now() > due + 5 * 60 * 1000) setConn("bad", `Missed its check-in (due ${clock(lastStatus.next_wake)})`);
@@ -694,6 +703,10 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 
   // ---------- start ----------
   renderPills(); renderLog(); applyLogOpen(); renderSched(); applySchedOpen(); renderCheckin(); setCiLocked(true); setDropLocked(true);
+  (() => {                                            // last known reading, until fresh data arrives
+    const c = store.get("lastStatus", null);
+    if (c && c.d) { lastStatus = c.d; lastStatusAt = c.at; try { renderStatus(c.d); } catch (e) {} refreshConn(); }
+  })();
   setInterval(renderNext, 60000);
   if (typeof mqtt === "undefined") { show("signin"); $("siErr").textContent = "The connection library didn't load. Check this phone's internet and reload."; }
   else if (cfg && cfg.pass) connect(false); else show("signin");
