@@ -68,6 +68,11 @@ input[type=text],input[type=password]{width:100%;height:48px;border-radius:12px;
 .row{display:flex;gap:10px;align-items:center}
 .err{color:var(--bad);font-size:14px;margin-top:10px;min-height:20px}
 a{color:var(--blaze)}
+.locstrip{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.logtoggle{display:flex;justify-content:space-between;align-items:center;width:100%;background:none;border:none;padding:0;color:var(--text);text-align:left}
+.logtoggle svg{transition:transform .15s ease}
+.logtoggle[aria-expanded="false"] svg{transform:rotate(-90deg)}
+@media (prefers-reduced-motion:reduce){.logtoggle svg{transition:none}}
 /* corn + total row */
 .duo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:8px;align-items:stretch}
 .duo .panel{display:flex;flex-direction:column;min-width:0}
@@ -77,6 +82,8 @@ dialog{border:1px solid var(--line);border-radius:16px;background:var(--surface)
 dialog::backdrop{background:rgba(0,0,0,.6)}
 .danger{height:48px;border:none;border-radius:12px;background:var(--bad);color:#1a0806;font-weight:600;font-size:16px;flex:1}
 #ciSlider{width:100%;height:36px;accent-color:var(--blaze);margin:0}
+#ciSlider:disabled{opacity:.45;filter:grayscale(.6)}
+#ciLock[aria-pressed="true"]{border-color:var(--blaze);color:#f7c9a6}
 /* schedule */
 .srow{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(0,1.1fr);gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .srow:first-child{border-top:none}
@@ -131,7 +138,14 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     </div>
   </div>
 
-  <div class="tiles" style="margin-top:14px">
+  <div class="locstrip" style="margin-top:12px">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;color:var(--blaze)"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+    <div style="min-width:0;flex:1"><div id="locText" style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No GPS fix yet</div><div class="small" id="locSub" style="font-size:12px"></div></div>
+    <a id="locMap" class="linkbtn hidden" style="display:grid;place-items:center;text-decoration:none" target="_blank" rel="noopener">Map</a>
+    <button class="linkbtn" id="btnGps" type="button" aria-label="Request a new GPS fix">Update</button>
+  </div>
+
+  <div class="tiles" style="margin-top:10px">
     <div class="tile"><span class="small">Battery</span><span class="big" id="tBatt">—</span><span class="sub" id="tBattSub">waiting</span></div>
     <div class="tile"><span class="small">Signal</span><span class="big" id="tSig">—</span><span class="sub" id="tSigSub">waiting</span></div>
     <div class="tile"><span class="small">Last drop</span><span class="big" id="tDrop">—</span><span class="sub" id="tDropSub">none yet</span></div>
@@ -151,6 +165,11 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       <span class="small" id="totSub">waiting for the feeder</span>
     </div>
   </div>
+  <dialog id="dlgSleep" aria-labelledby="dlgSleepTitle">
+    <h2 id="dlgSleepTitle" style="font-size:22px">Put the feeder to sleep?</h2>
+    <p class="small" id="dlgSleepText" style="font-size:14px;margin:8px 0 16px">It stops responding until its next check-in. Scheduled feedings still run on time.</p>
+    <div class="row"><button class="secondary" id="dlgSleepCancel" type="button" style="flex:1">Cancel</button><button class="primary" id="dlgSleepConfirm" type="button" style="flex:1;height:48px;font-size:17px">Go to sleep</button></div>
+  </dialog>
   <dialog id="dlgReset" aria-labelledby="dlgResetTitle">
     <h2 id="dlgResetTitle" style="font-size:22px">Reset the total?</h2>
     <p class="small" style="font-size:14px;margin:8px 0 16px">This sets the running total of corn dropped back to zero. It can't be undone.</p>
@@ -168,34 +187,41 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   </div>
 
   <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
-    <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Feeding times</h2><span class="small" id="schedNext"></span></div>
-    <div id="schedRows" role="list" aria-label="Feeding times"></div>
-    <button class="primary" id="btnSchedSave" style="height:48px;font-size:19px" disabled>Save to feeder</button>
+    <button class="logtoggle" id="schedToggle" type="button" aria-expanded="true" aria-controls="schedBody">
+      <span class="row" style="align-items:baseline;gap:10px;min-width:0"><h2>Feeding times</h2><span class="small" id="schedNext"></span></span>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div id="schedBody" style="display:flex;flex-direction:column;gap:10px">
+      <div id="schedRows" role="list" aria-label="Feeding times"></div>
+      <button class="primary" id="btnSchedSave" style="height:48px;font-size:19px" disabled>Save to feeder</button>
+      <p class="small" style="margin:0">Up to six times a day, using the feeder's clock (US Central). The schedule is stored on the feeder, so it keeps feeding even without signal.</p>
+    </div>
     <div id="schedNote" class="note hidden" role="status"></div>
-    <p class="small" style="margin:0">Up to six times a day, using the feeder's clock (US Central). The schedule is stored on the feeder, so it keeps feeding even without signal.</p>
   </div>
 
   <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
-    <div class="row" style="justify-content:space-between;align-items:baseline"><h2>Check-in</h2><span class="small" id="ciNow"></span></div>
+    <div class="row" style="justify-content:space-between;align-items:center"><h2>Check-in</h2>
+      <button class="linkbtn" id="ciLock" type="button" aria-pressed="false" style="display:flex;align-items:center;gap:6px">
+        <svg id="ciLockIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        <span id="ciLockText">Unlock</span></button></div>
     <div class="row" style="align-items:baseline;gap:8px"><span class="big" id="ciVal">—</span><span class="small" id="ciHint"></span></div>
-    <input type="range" id="ciSlider" min="0" max="60" step="5" value="15" aria-label="Minutes between check-ins">
+    <span class="small" id="ciNow" style="margin-top:-6px"></span>
+    <input type="range" id="ciSlider" min="0" max="60" step="5" value="15" aria-label="Minutes between check-ins (locked)" disabled>
     <div class="row" style="justify-content:space-between" aria-hidden="true"><span class="small">Always on</span><span class="small">15</span><span class="small">30</span><span class="small">45</span><span class="small">60 min</span></div>
-    <button class="secondary" id="btnStayAwake" type="button" style="height:44px">Stay awake 10 min</button>
+    <span class="small">Stay awake (starts at the next check-in)</span>
+    <div class="pills" id="awPills" style="grid-template-columns:repeat(4,minmax(0,1fr))" role="group" aria-label="Stay awake for"></div>
+    <button class="linkbtn hidden" id="btnAwakeCancel" type="button" style="height:40px">Go back to the sleep schedule now</button>
+    <button class="secondary" id="btnSleepNow" type="button" style="height:44px">Go to sleep now</button>
     <div id="ciNote" class="note hidden" role="status"></div>
-    <p class="small" style="margin:0">"Stay awake" keeps the feeder responding instantly for 10 minutes, starting at its next check-in (the wake button on the feeder does the same right away). Between check-ins the feeder sleeps to save battery. Feeding times still run exactly on time; "Drop corn now" and other changes wait for the next check-in. "Always on" responds instantly but uses far more power.</p>
+    <p class="small" style="margin:0">"Stay awake" keeps the feeder responding instantly for the time you pick, starting at its next check-in, then it returns to its check-in schedule. The wake button on the feeder gives 10 minutes right away. Between check-ins the feeder sleeps to save battery. Feeding times still run exactly on time; "Drop corn now" and other changes wait for the next check-in. "Always on" responds instantly but uses far more power.</p>
   </div>
 
   <div class="panel" style="margin-top:14px">
-    <div class="row" style="justify-content:space-between;align-items:center;gap:12px">
-      <div><span class="small">Location</span><div id="locText" style="font-size:15px;font-weight:600;margin-top:3px">No GPS fix yet</div><div class="small" id="locSub"></div></div>
-      <a id="locMap" class="secondary hidden" style="display:grid;place-items:center;text-decoration:none" target="_blank" rel="noopener">Open map</a>
-    </div>
-    <button class="secondary" id="btnGps" style="margin-top:10px;width:100%">Request new GPS fix</button>
-  </div>
-
-  <div class="panel" style="margin-top:14px">
-    <h2 style="font-size:20px;margin-bottom:6px">Activity</h2>
-    <ol class="log" id="log"><li><span class="small">Nothing yet. Drops, jams and readings show up here.</span></li></ol>
+    <button class="logtoggle" id="logToggle" type="button" aria-expanded="true" aria-controls="log">
+      <h2 style="font-size:20px">Activity <span class="small" id="logCount" style="font-family:var(--body);font-size:13px"></span></h2>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <ol class="log" id="log" style="margin-top:6px"><li><span class="small">Nothing yet. Drops, jams and readings show up here.</span></li></ol>
   </div>
 </section>
 
@@ -370,9 +396,9 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       else $("cornBar").style.background = "";
     }
     if (Array.isArray(d.sched)) onSchedFromFeeder(d.sched, d.clock_ok);
-    renderCheckin();
+    renderCheckin(); renderAwake();
     if (typeof d.lat === "number") {
-      $("locText").textContent = `${Math.abs(d.lat).toFixed(5)}° ${d.lat >= 0 ? "N" : "S"}, ${Math.abs(d.lon).toFixed(5)}° ${d.lon >= 0 ? "E" : "W"}`;
+      $("locText").textContent = `${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}`;
       $("locSub").textContent = d.fix_conf_m ? `Accurate to about ${Math.round(d.fix_conf_m)} m` : "";
       const a = $("locMap"); a.href = `https://www.google.com/maps/search/?api=1&query=${d.lat},${d.lon}`; a.classList.remove("hidden");
     }
@@ -457,6 +483,12 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     });
     renderNext();
   }
+  let schedOpen = store.get("schedOpen", true);
+  function applySchedOpen() {
+    $("schedToggle").setAttribute("aria-expanded", String(schedOpen));
+    $("schedBody").classList.toggle("hidden", !schedOpen);
+  }
+  $("schedToggle").onclick = () => { schedOpen = !schedOpen; store.set("schedOpen", schedOpen); applySchedOpen(); };
   function markDirty() { dirty = true; $("btnSchedSave").disabled = false; $("schedNote").classList.add("hidden"); }
   function schedNote(kind, text) { const n = $("schedNote"); n.className = "note " + kind; n.textContent = text; }
   function renderNext() {
@@ -495,9 +527,25 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     $("ciHint").textContent = ciHint(m);
     $("ciSlider").setAttribute("aria-valuetext", ciLabel(m));
   }
+  // Slider is locked so scrolling past it can't change the setting. Unlock re-locks after a change or 30 s.
+  let ciLockTimer = null;
+  function setCiLocked(locked) {
+    const sl = $("ciSlider");
+    sl.disabled = locked;
+    sl.setAttribute("aria-label", "Minutes between check-ins" + (locked ? " (locked)" : ""));
+    $("ciLock").setAttribute("aria-pressed", String(!locked));
+    $("ciLockText").textContent = locked ? "Unlock" : "Lock";
+    $("ciLockIcon").innerHTML = locked
+      ? '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+      : '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>';
+    clearTimeout(ciLockTimer);
+    if (!locked) ciLockTimer = setTimeout(() => setCiLocked(true), 30000);
+  }
+  $("ciLock").onclick = () => setCiLocked(!$("ciSlider").disabled);
   $("ciSlider").addEventListener("input", () => { ciDragging = true; showCi(Number($("ciSlider").value)); });
   $("ciSlider").addEventListener("change", () => {
     ciDragging = false;
+    setCiLocked(true);                              // lock again right after a change
     const m = Number($("ciSlider").value);
     const cur = lastStatus && typeof lastStatus.checkin_min === "number" ? lastStatus.checkin_min : null;
     if (m === cur) { ciNote("ok", "No change."); return; }
@@ -513,13 +561,52 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (cur === null && !ciDragging) showCi(Number($("ciSlider").value));
   }
   function ciNote(kind, text) { const n = $("ciNote"); n.className = "note " + kind; n.textContent = text; }
-  $("btnStayAwake").onclick = () => {
-    if (!queueCmd("awake 10")) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
-    ciNote("warn", queuedMsg("stay awake for 10 minutes") || "Sent. The feeder will stay awake for 10 minutes.");
+  const AWAKE_OPTS = [{ m: 10, label: "10 min", long: "10 minutes" }, { m: 120, label: "2 h", long: "2 hours" },
+                      { m: 240, label: "4 h", long: "4 hours" }, { m: 360, label: "6 h", long: "6 hours" }];
+  AWAKE_OPTS.forEach(o => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "pill"; b.textContent = o.label;
+    b.setAttribute("aria-label", `Stay awake ${o.long}`);
+    b.onclick = () => {
+      if (!queueCmd("awake " + o.m)) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
+      ciNote("warn", asleep()
+        ? `Queued. Starting at its next check-in (about ${nextWakeText()}), the feeder will stay awake for ${o.long}, then return to its check-in schedule.`
+        : `Sent. The feeder will stay awake for ${o.long}, then return to its check-in schedule.`);
+    };
+    $("awPills").appendChild(b);
+  });
+  $("btnAwakeCancel").onclick = () => {
+    if (!queueCmd("awake 0")) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
+    ciNote("warn", "Sent. The feeder will go back to its check-in schedule.");
   };
+  $("btnSleepNow").onclick = () => {
+    const ci = (lastStatus && lastStatus.checkin_min) || 0;
+    $("dlgSleepText").textContent = ci
+      ? `It stops responding until its next check-in, about ${ci} minutes from when it gets this. Scheduled feedings still run on time.`
+      : "It's set to Always on, so it will sleep for 15 minutes, then wake and stay on again. Scheduled feedings still run on time.";
+    if (typeof $("dlgSleep").showModal === "function") $("dlgSleep").showModal();
+    else if (confirm("Put the feeder to sleep?")) doSleep();
+  };
+  $("dlgSleepCancel").onclick = () => $("dlgSleep").close();
+  $("dlgSleepConfirm").onclick = () => { $("dlgSleep").close(); doSleep(); };
+  function doSleep() {
+    if (!queueCmd("sleep")) { ciNote("bad", "Not connected to the broker. The request was not sent."); return; }
+    ciNote("warn", asleep() ? "Queued. The feeder is already asleep; it will go straight back to sleep at its next check-in." : "Sent. The feeder is going to sleep.");
+  }
+  function renderAwake() {
+    const until = lastStatus && lastStatus.awake_until > Date.now() / 1000 ? lastStatus.awake_until : 0;
+    $("btnAwakeCancel").classList.toggle("hidden", !until);
+    if (until) $("btnAwakeCancel").textContent = `Awake until ${clock(until)} · go back to the sleep schedule now`;
+  }
 
   // ---------- activity log ----------
   function addLog(text, bad) { log.unshift({ t: Date.now(), text, bad: !!bad }); log = log.slice(0, 15); store.set("log", log); renderLog(); }
+  let logOpen = store.get("logOpen", true);
+  function applyLogOpen() {
+    $("logToggle").setAttribute("aria-expanded", String(logOpen));
+    $("log").classList.toggle("hidden", !logOpen);
+    $("logCount").textContent = logOpen ? "" : (log.length ? `· ${log.length}` : "");
+  }
+  $("logToggle").onclick = () => { logOpen = !logOpen; store.set("logOpen", logOpen); applyLogOpen(); };
   function renderLog() {
     const ol = $("log"); if (!log.length) return; ol.innerHTML = "";
     for (const e of log) {
@@ -546,14 +633,14 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (send("status")) setConn("warn", "Asked the feeder for a fresh reading…");
   };
   $("btnGps").onclick = () => {
-    if (queueCmd("gps")) { $("locSub").textContent = "Getting a fix. This takes 1–3 minutes, and the feeder is briefly offline while it does."; addLog("Requested a GPS fix"); }
+    if (queueCmd("gps")) { $("locSub").textContent = asleep() ? `GPS fix queued for ${nextWakeText()}` : "Getting a fix (1–3 min)…"; addLog("Requested a GPS fix"); }
   };
   $("btnSettings").onclick = () => { $("stName").value = cfg.name; $("stFeeder").textContent = cfg.feeder; $("stHost").textContent = cfg.host; $("stUser").textContent = cfg.user; show("settings"); };
   $("btnBack").onclick = () => { cfg.name = $("stName").value.trim() || cfg.name; store.set("cfg", cfg); $("feederName").textContent = cfg.name; show("home"); };
   $("btnSignOut").onclick = () => { if (client) client.end(true); client = null; store.del("cfg"); cfg = null; $("siPass").value = ""; show("signin"); };
 
   // ---------- start ----------
-  renderPills(); renderLog(); renderSched(); renderCheckin();
+  renderPills(); renderLog(); applyLogOpen(); renderSched(); applySchedOpen(); renderCheckin(); setCiLocked(true);
   setInterval(renderNext, 60000);
   if (typeof mqtt === "undefined") { show("signin"); $("siErr").textContent = "The connection library didn't load. Check this phone's internet and reload."; }
   else if (cfg && cfg.pass) connect(false); else show("signin");
