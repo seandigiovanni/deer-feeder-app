@@ -82,7 +82,11 @@ a{color:var(--blaze)}
 dialog{border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--text);padding:18px;max-width:340px;width:calc(100% - 40px)}
 dialog::backdrop{background:rgba(0,0,0,.6)}
 .danger{height:48px;border:none;border-radius:12px;background:var(--bad);color:#1a0806;font-weight:600;font-size:16px;flex:1}
-#ciSlider{width:100%;height:36px;accent-color:var(--blaze);margin:0}
+#ciSlider{width:100%;height:40px;margin:0;-webkit-appearance:none;appearance:none;background:transparent;touch-action:pan-y}
+#ciSlider::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:var(--line)}
+#ciSlider::-moz-range-track{height:6px;border-radius:3px;background:var(--line)}
+#ciSlider::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;border-radius:50%;background:var(--blaze);border:3px solid #f7c9a6;margin-top:-12px}
+#ciSlider::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:var(--blaze);border:3px solid #f7c9a6}
 #ciSlider:disabled{opacity:.45;filter:grayscale(.6)}
 #awPills .pill:disabled,#btnSleepNow:disabled,#pills .pill:disabled,#btnDrop:disabled{opacity:.45}
 #dropLock[aria-pressed="true"]{border-color:var(--blaze);color:#f7c9a6}
@@ -596,6 +600,19 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (!locked) ciLockTimer = setTimeout(() => setCiLocked(true), 30000);
   }
   $("ciLock").onclick = () => setCiLocked(!$("ciSlider").disabled);
+  // Only the ball moves the slider: a tap or press on the track (away from the ball) is ignored,
+  // so scrolling past or tapping the bar can't change the setting.
+  const CI_THUMB = 30;
+  function onThumb(clientX) {
+    const sl = $("ciSlider"), r = sl.getBoundingClientRect();
+    const frac = (Number(sl.value) - Number(sl.min)) / (Number(sl.max) - Number(sl.min));
+    const x = r.left + CI_THUMB / 2 + frac * (r.width - CI_THUMB);
+    return Math.abs(clientX - x) <= CI_THUMB * 0.8;   // a little forgiving for fingers
+  }
+  const blockTrack = (e, x) => { if (!$("ciSlider").disabled && !onThumb(x)) { e.preventDefault(); e.stopImmediatePropagation(); } };
+  $("ciSlider").addEventListener("touchstart", e => blockTrack(e, e.touches[0].clientX), { passive: false, capture: true });
+  $("ciSlider").addEventListener("mousedown", e => blockTrack(e, e.clientX), { capture: true });
+  $("ciSlider").addEventListener("pointerdown", e => blockTrack(e, e.clientX), { capture: true });
   $("ciSlider").addEventListener("input", () => { ciDragging = true; showCi(Number($("ciSlider").value)); });
   $("ciSlider").addEventListener("change", () => {
     ciDragging = false;
