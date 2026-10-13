@@ -74,6 +74,9 @@ a{color:var(--blaze)}
 .logtoggle svg{transition:transform .15s ease}
 .logtoggle[aria-expanded="false"] svg{transform:rotate(-90deg)}
 @media (prefers-reduced-motion:reduce){.logtoggle svg{transition:none}}
+.hday{display:flex;justify-content:space-between;font-weight:600;padding:12px 0 4px;border-bottom:1px solid var(--line)}
+.hrow{display:grid;grid-template-columns:72px 1fr auto;gap:8px;padding:7px 0;border-bottom:1px solid var(--surface);font-size:14px}
+.hrow .src{color:var(--muted);font-size:12px}.hrow.jam .amt{color:var(--bad)}
 /* corn + total row */
 .duo{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:8px;align-items:stretch}
 .duo .panel{display:flex;flex-direction:column;min-width:0}
@@ -168,11 +171,22 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       <span class="small" id="cornAge" style="font-size:11px;margin-top:6px"></span>
     </div>
     <div class="panel">
-      <div class="row" style="justify-content:space-between;align-items:baseline"><span class="small">Total dropped</span><button class="linkbtn" id="btnTotalReset" type="button">Reset</button></div>
+      <div class="row" style="justify-content:space-between;align-items:baseline"><span class="small">Total dropped</span><span class="row" style="gap:6px"><button class="linkbtn" id="btnHistory" type="button">History</button><button class="linkbtn" id="btnTotalReset" type="button">Reset</button></span></div>
       <span class="big" id="totCups" style="margin:6px 0 2px">—</span>
       <span class="small" id="totSub">waiting for the feeder</span>
     </div>
   </div>
+  <dialog id="dlgHist" aria-labelledby="dlgHistTitle" style="max-width:420px;width:calc(100% - 24px);max-height:85vh;padding:0">
+    <div style="padding:16px 16px 8px;border-bottom:1px solid var(--line)">
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 id="dlgHistTitle" style="font-size:22px">Corn dropped</h2><button class="linkbtn" id="histClose" type="button">Close</button></div>
+      <div class="small" id="histSum" style="margin-top:4px"></div>
+    </div>
+    <div id="histList" style="overflow:auto;max-height:60vh;padding:4px 16px 8px"></div>
+    <div style="padding:10px 16px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px">
+      <button class="secondary" id="histFetch" type="button" style="height:44px">Get full history from the feeder</button>
+      <span class="small" id="histNote"></span>
+    </div>
+  </dialog>
   <dialog id="dlgSleep" aria-labelledby="dlgSleepTitle">
     <h2 id="dlgSleepTitle" style="font-size:22px">Put the feeder to sleep?</h2>
     <p class="small" id="dlgSleepText" style="font-size:14px;margin:8px 0 16px">It stops responding until its next check-in. Scheduled feedings still run on time.</p>
@@ -490,16 +504,23 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       if (schedSaving) { clearTimeout(schedSaving); schedSaving = null; }
       schedNote("ok", "Saved on the feeder.");
       addLog("Feeding schedule updated");
+    } else if (d.event === "drop_log") {
+      (d.entries || []).forEach(e => addDrop(e[0], e[1], e[2], e[3], e[4], e[5]));
+      if ($("dlgHist").open) $("histNote").textContent = "History updated from the feeder.";
     } else if (d.event === "drop" && d.sched > 0) {
-      addLog(`Scheduled feeding: dropped ${cupsText(d.pockets)}`);
+      addDrop(d.seq, d.t, d.pockets, d.requested, d.sched, 0);
+      addLog(`Scheduled feeding: dropped ${cupsText(d.pockets)} · ${lbText(d.pockets)}`, false, d.t);
     } else if (d.event === "drop") {
+      addDrop(d.seq, d.t, d.pockets, d.requested, d.sched, 0);
       setTimeout(renderPending, 0);
-      addLog(`Dropped ${cupsText(d.pockets)} (${d.pockets} pockets)`);
+      addLog(`Dropped ${cupsText(d.pockets)} · ${lbText(d.pockets)}`, false, d.t);
       if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = dropLocked; note("ok", `Dropped ${cupsText(d.pockets)}.`); }
     } else if (d.event === "jam") {
-      addLog(`${d.sched > 0 ? "Scheduled feeding jammed" : "Jam"} after ${d.pockets} of ${d.requested} pockets`, true);
+      addDrop(d.seq, d.t, d.pockets, d.requested, d.sched, 1);
+      addLog(`${d.sched > 0 ? "Scheduled feeding jammed" : "Jam"} after ${d.pockets ? cupsText(d.pockets) : "0 cups"} of ${cupsText(d.requested)}`, true, d.t);
       if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = dropLocked; }
-      note("bad", `The wheel jammed after ${d.pockets ? cupsText(d.pockets) : "0 pockets"}. Check the wheel and the wiper before feeding again.`);
+      const recent = !(d.t > 1600000000) || Date.now() / 1000 - d.t < 300;   // don't alarm about an old, replayed jam
+      if (recent) note("bad", `The wheel jammed after ${d.pockets ? cupsText(d.pockets) : "0 cups"}. Check the wheel and the wiper before feeding again.`);
     } else if (d.event === "gps_failed") {
       addLog("GPS fix failed", true);
       $("locSub").textContent = "Last GPS attempt failed. Try again with a clearer view of the sky.";
@@ -718,8 +739,56 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     if (until) $("btnAwakeCancel").textContent = `Awake until ${clock(until)} · go back to the sleep schedule now`;
   }
 
+  // ---------- drop history (from the feeder's own log, real drop times) ----------
+  const LB_PER_CUP = 0.376;
+  let drops = store.get("drops", {});               // seq -> {t, p, req, src, jam}
+  function addDrop(seq, t, p, req, src, jam) {
+    if (!seq) return;
+    drops[seq] = { t, p, req, src, jam: jam ? 1 : 0 };
+    const keys = Object.keys(drops).map(Number).sort((a, b) => b - a);
+    if (keys.length > 500) keys.slice(500).forEach(k => delete drops[k]);
+    store.set("drops", drops);
+    if ($("dlgHist").open) renderHist();
+  }
+  const lbText = p => (p / 4 * LB_PER_CUP).toFixed(2) + " lb";
+  function renderHist() {
+    const list = Object.entries(drops).map(([seq, d]) => ({ seq: Number(seq), ...d })).sort((a, b) => (b.t || 0) - (a.t || 0) || b.seq - a.seq);
+    const box = $("histList"); box.innerHTML = "";
+    const totalP = list.reduce((a, d) => a + d.p, 0);
+    $("histSum").textContent = list.length ? `${list.length} drops · ${cupsText(totalP) || "0 cups"} · ${lbText(totalP)}` : "No drops recorded yet.";
+    let day = null, dayBox = null, dayP = 0, dayHead = null;
+    const closeDay = () => { if (dayHead) dayHead.lastChild.textContent = `${cupsText(dayP)} · ${lbText(dayP)}`; };
+    list.forEach(d => {
+      const dt = d.t ? new Date(d.t * 1000) : null;
+      const key = dt ? dt.toDateString() : "Time unknown";
+      if (key !== day) {
+        closeDay(); day = key; dayP = 0;
+        dayHead = document.createElement("div"); dayHead.className = "hday";
+        const a = document.createElement("span"); a.textContent = dt ? dt.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "Time unknown (clock not set)";
+        const b = document.createElement("span"); b.className = "small"; dayHead.append(a, b); box.appendChild(dayHead);
+      }
+      dayP += d.p;
+      const row = document.createElement("div"); row.className = "hrow" + (d.jam ? " jam" : "");
+      const t = document.createElement("span"); t.textContent = dt ? dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "-";
+      const s = document.createElement("span"); s.className = "src"; s.textContent = d.src > 0 ? `Feeding time ${d.src}` : "Drop now";
+      const a = document.createElement("span"); a.className = "amt";
+      a.textContent = d.jam ? `${d.p ? cupsText(d.p) : "0 cups"} · ${lbText(d.p)} · jammed (asked ${cupsText(d.req)})` : `${cupsText(d.p)} · ${lbText(d.p)}`;
+      row.append(t, s, a); box.appendChild(row);
+    });
+    closeDay();
+  }
+  $("btnHistory").onclick = () => { renderHist(); $("histNote").textContent = ""; if (typeof $("dlgHist").showModal === "function") $("dlgHist").showModal(); };
+  $("histClose").onclick = () => $("dlgHist").close();
+  $("histFetch").onclick = () => {
+    if (!queueCmd("log")) { $("histNote").textContent = "Not connected to the broker."; return; }
+    $("histNote").textContent = asleep() ? `Requested. The feeder sends its history at its next check-in, about ${nextWakeText()}.` : "Requested. It should arrive in a few seconds.";
+  };
+
   // ---------- activity log ----------
-  function addLog(text, bad) { log.unshift({ t: Date.now(), text, bad: !!bad }); log = log.slice(0, 15); store.set("log", log); renderLog(); }
+  function addLog(text, bad, when) {      // when = feeder time in seconds (drops made while offline keep their real time)
+    const t = when > 1600000000 ? when * 1000 : Date.now();
+    log.push({ t, text, bad: !!bad }); log.sort((a, b) => b.t - a.t); log = log.slice(0, 15); store.set("log", log); renderLog();
+  }
   let logOpen = store.get("logOpen", true);
   function applyLogOpen() {
     $("logToggle").setAttribute("aria-expanded", String(logOpen));
