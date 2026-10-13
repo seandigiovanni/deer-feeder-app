@@ -246,6 +246,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     <label>Feeder ID</label><div id="stFeeder" style="font-size:16px"></div>
     <label>Broker</label><div id="stHost" class="small" style="word-break:break-all"></div>
     <label>Signed in as</label><div id="stUser" style="font-size:16px"></div>
+    <label>Feeder firmware</label><div id="stFw" style="font-size:16px">-</div>
   </div>
   <div class="panel" style="margin-top:14px;display:flex;flex-direction:column;gap:10px">
     <h2 style="font-size:20px">Feeder Wi-Fi</h2>
@@ -754,7 +755,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
   $("btnGps").onclick = () => {
     if (queueCmd("gps")) { $("locSub").textContent = asleep() ? `GPS fix queued for ${nextWakeText()}` : "Getting a fix (1–3 min)…"; addLog("Requested a GPS fix"); }
   };
-  $("btnSettings").onclick = () => { $("stName").value = cfg.name; $("stFeeder").textContent = cfg.feeder; $("stHost").textContent = cfg.host; $("stUser").textContent = cfg.user; renderWifiCard(); show("settings"); };
+  $("btnSettings").onclick = () => { $("stName").value = cfg.name; $("stFeeder").textContent = cfg.feeder; $("stHost").textContent = cfg.host; $("stUser").textContent = cfg.user; $("stFw").textContent = (lastStatus && lastStatus.fw) || "unknown (rev14 or earlier)"; renderWifiCard(); show("settings"); };
   // Feeder Wi-Fi: network SI-Feeder-<last 4 of ID>, default password "feeder" + the same 4 characters
   function renderWifiCard() {
     const id = (cfg && cfg.feeder) || "";
