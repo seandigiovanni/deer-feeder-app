@@ -450,7 +450,8 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
     renderCheckin(); renderAwake(); renderPending();
     if (typeof d.lat === "number") {
       $("locText").textContent = `${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}`;
-      $("locSub").textContent = d.fix_conf_m ? `Accurate to about ${Math.round(d.fix_conf_m)} m` : "";
+      const when = d.fix_t > 1600000000 ? new Date(d.fix_t * 1000).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "";
+      $("locSub").textContent = [d.fix_conf_m ? `±${Math.round(d.fix_conf_m * 3.281)} ft` : "", when ? `fix from ${when}` : ""].filter(Boolean).join(" · ");
       const a = $("locMap"); a.href = `https://www.google.com/maps/search/?api=1&query=${d.lat},${d.lon}`; a.classList.remove("hidden");
     }
   }
@@ -521,9 +522,13 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
       if (pending) { clearTimeout(pending.timer); pending = null; $("btnDrop").disabled = dropLocked; }
       const recent = !(d.t > 1600000000) || Date.now() / 1000 - d.t < 300;   // don't alarm about an old, replayed jam
       if (recent) note("bad", `The wheel jammed after ${d.pockets ? cupsText(d.pockets) : "0 cups"}. Check the wheel and the wiper before feeding again.`);
+    } else if (d.event === "moved") {
+      const ft = Math.round(d.dist_m * 3.281);
+      note("bad", `The feeder has moved about ${ft.toLocaleString()} ft from its saved location. The new position is shown above.`);
+      addLog(`Feeder moved ~${ft.toLocaleString()} ft`, true);
     } else if (d.event === "gps_failed") {
       addLog("GPS fix failed", true);
-      $("locSub").textContent = "Last GPS attempt failed. Try again with a clearer view of the sky.";
+      $("locSub").textContent = "Last GPS attempt failed - keeping the saved position. Try again with a clearer view of the sky.";
     }
   }
   function cupsText(p) { const c = p / 4; const w = Math.floor(c), f = ["","¼","½","¾"][p % 4];
